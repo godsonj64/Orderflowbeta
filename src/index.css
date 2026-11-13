@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist", "Oswald", sans-serif;
+  --font-display: "Geist", "Oswald", sans-serif;
+  --font-mono: "JetBrains Mono", "Geist", "Oswald", monospace;
+
+  /* Admin portal palette (Warm Sand, Cream & Deep Forest Charcoal from deployed UI) */
+  --color-primary: #287350;
+  --color-primary-dark: #1E5A3E;
+  --color-primary-light: #EBF5F0;
+  --color-black: #0C100C;
+  --color-gray-900: #151B15;
+  --color-gray-800: #232D23;
+  --color-gray-700: #374437;
+  --color-gray-600: #4A5A4A;
+  --color-gray-500: #6B7D6B;
+  --color-gray-400: #9EB09E;
+  --color-gray-300: #D8CBB8;
+  --color-gray-200: #EADDC5;
+  --color-gray-100: #F2EBE1;
+  --color-gray-50: #FAF6F0;
+
+  /*
+   * Storefront design tokens. These defaults are the Kupa Light Mode theme; the owner's
+   * theme (Admin → Settings → Appearance) overrides them at runtime, see src/lib/theme.ts.
+   */
+  --color-brand: #287350;
+  --color-on-brand: #FFFFFF;
+  --color-accent: #EBF5F0;
+  --color-on-accent: #121615;
+  --color-page: #FFFFFF;
+  --color-card: #FFFFFF;
+  --color-ink: #121615;
+  --color-muted: #7A8280;
+  --color-line: #EDF0EE;
+  --color-soft: #F6F7F8;
+  --radius-card: 18px;
+  --radius-btn: 14px;
+  --radius-chip: 9999px;
+}
+
+html {
+  overflow-x: clip;
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+  font-family: var(--font-sans);
+}
+
+body {
+  overflow-x: clip;
+  width: 100%;
+  font-family: var(--font-sans);
+  background-color: var(--app-bg, var(--color-gray-50));
+  color: var(--color-gray-900);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* JetBrains Mono with Geist and Oswald fallbacks */
+.font-mono,
+.tabular-nums {
+  font-family: "JetBrains Mono", "Geist", "Oswald", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+/* iOS Safari zooms into inputs with a font size below 16px; keep forms usable on phones. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Custom iOS-like shadows */
+@layer utilities {
+  .shadow-ios {
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+  }
+  .shadow-ios-sm {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  }
+  .shadow-ios-lg {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+  }
+  .animate-marquee {
+    animation: marquee var(--marquee-duration, 60s) linear infinite;
+    will-change: transform;
+    transform: translateZ(0);
+  }
+  .animate-gallery-marquee {
+    animation: marquee var(--marquee-duration, 120s) linear infinite;
+    will-change: transform;
+    transform: translateZ(0);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+  .cv-section {
+    position: relative;
+  }
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-gallery-marquee {
+    animation: none;
+  }
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.hide-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
