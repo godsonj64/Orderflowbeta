@@ -57,11 +57,6 @@ export function isNoDatabaseError(err: unknown): boolean {
   return err instanceof ApiError && err.data?.code === 'SERVER_NO_DATABASE';
 }
 
-/** The request may or may not have reached the server (offline, timeout): safe to retry, not to assume failure. */
-export function isNetworkError(err: unknown): boolean {
-  return err instanceof ApiError && err.status === 0;
-}
-
 export const apiGet = <T>(path: string) => request<T>('GET', path);
 export const apiPost = <T>(path: string, body: unknown = {}) => request<T>('POST', path, body);
 
@@ -70,7 +65,7 @@ export const apiPost = <T>(path: string, body: unknown = {}) => request<T>('POST
 // ---------------------------------------------------------------------------
 
 import type { OrderTotals, ModifierSelection, TipChoice } from './pricing';
-import type { GeoPoint, OrderStatus, OrderType, PaymentMethod, PaymentStatus } from '../types';
+import type { GeoPoint, OrderStatus, OrderType, PaymentMethod, PaymentStatus, RestaurantProfile } from '../types';
 
 export interface CheckoutRequest {
   items: { itemId: string; quantity: number; selections: ModifierSelection[]; notes?: string }[];
@@ -113,7 +108,7 @@ export interface PaymentStateResponse {
 }
 
 export const api = {
-  config: () => apiGet<{ cardPayments: boolean; ordering?: OrderingMode }>('/api/config'),
+  config: () => apiGet<{ cardPayments: boolean; ordering?: OrderingMode; profile?: RestaurantProfile | null }>('/api/config'),
   health: () =>
     apiGet<{ status: string; firestore: 'ok' | 'error'; ordering?: OrderingMode; cardPayments: boolean; webhooks: boolean }>('/api/health'),
   checkout: (body: CheckoutRequest) => apiPost<CheckoutResponse>('/api/checkout', body),

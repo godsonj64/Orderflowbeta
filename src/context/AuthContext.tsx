@@ -12,13 +12,18 @@ import {
   updateProfile,
   type User,
 } from 'firebase/auth';
-import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, clearLocalData, db } from '../firebase';
 import { isManagerRole, isStaffRole, type UserProfile, type UserRole } from '../types';
 import { reportError } from '../utils/errorHandling';
 
 /** Mirrors the bootstrap admin in firestore.rules. */
-const BOOTSTRAP_ADMIN_EMAILS = new Set(['godsonj64@gmail.com', 'godsonchristy25@gmail.com']);
+export const BOOTSTRAP_ADMIN_EMAILS = new Set(['godsonj64@gmail.com', 'godsonchristy25@gmail.com']);
+
+/** Deterministic Firestore doc ID in `users` for a pre-authorized team member invite. */
+export function emailInviteDocId(email: string): string {
+  return `invite_${email.trim().toLowerCase()}`;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -55,12 +60,15 @@ const AUTH_ERRORS: Record<string, string> = {
   'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
   'auth/network-request-failed': 'Network error. Check your connection and try again.',
   'auth/operation-not-allowed': 'This sign-in method is not enabled for this store.',
-  'auth/unauthorized-domain': 'Sign-in is not enabled for this website address yet. (Owner: add this domain in Firebase Authentication → Settings.)',
+  'auth/unauthorized-domain': 'Sign-in is not enabled for this website address yet. (Owner: add this domain in Firebase Authentication → Settings → Authorized domains.)',
   'auth/user-disabled': 'This account has been disabled.',
 };
 
 export function authErrorMessage(error: unknown): string {
   const code = (error as { code?: string })?.code || '';
+  if (code === 'auth/unauthorized-domain' && typeof window !== 'undefined' && window.location?.hostname) {
+    return `Google sign-in is not enabled for "${window.location.hostname}" yet. Add "${window.location.hostname}" in Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
   return AUTH_ERRORS[code] || 'Something went wrong. Please try again.';
 }
 
@@ -70,6 +78,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const pendingName = useRef<string>('');
   const creatingFor = useRef<string | null>(null);
+  const inviteCheckedFor = useRef<string | null>(null);
 
   useEffect(() => {
     // Surface errors from a redirect-based Google sign-in (used when popups are blocked).
@@ -93,29 +102,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (snap) => {
           const fromCache = snap.metadata.fromCache;
           if (snap.exists()) {
-            setUserProfile(snap.data() as UserProfile);
+            const data = snap.data() as UserProfile;
+            const emailLower = (currentUser.email || data.email || '').toLowerCase();
+            const isBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has(emailLower);
+            if (isBootstrapAdmin && data.role !== 'admin') {
+              updateDoc(ref, { role: 'admin' }).catch(() => undefined);
+              setUserProfile({ ...data, role: 'admin' });
+              setLoading(false);
+              return;
+            }
+            setUserProfile(data);
             setLoading(false);
+
+            // Check if an admin pre-authorized a team role for this user's email
+            // (Once per sign-in: the profile changes with every order, the invite does not.)
+            if (emailLower && data.role === 'customer' && !fromCache && inviteCheckedFor.current !== currentUser.uid) {
+              inviteCheckedFor.current = currentUser.uid;
+              const inviteRef = doc(db, 'users', emailInviteDocId(emailLower));
+              getDoc(inviteRef)
+                .then(async (inviteSnap) => {
+                  if (!inviteSnap.exists()) return;
+                  const inviteData = inviteSnap.data() as UserProfile;
+                  if (inviteData.role && inviteData.role !== 'customer') {
+                    await updateDoc(ref, {
+                      role: inviteData.role,
+                      ...(inviteData.name && !data.name ? { name: inviteData.name } : {}),
+                    });
+                    await deleteDoc(inviteRef).catch(() => undefined);
+                  }
+                })
+                .catch(() => undefined);
+            }
             return;
           }
           // Only create the profile once we know (from the server) that it does not exist.
           if (fromCache || creatingFor.current === currentUser.uid) return;
           creatingFor.current = currentUser.uid;
-          const isBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has((currentUser.email || '').toLowerCase());
-          const profile: UserProfile = {
-            uid: currentUser.uid,
-            email: currentUser.email || '',
-            role: isBootstrapAdmin ? 'admin' : 'customer',
-            name: (currentUser.displayName || pendingName.current || '').slice(0, 100),
-            totalOrders: 0,
-            totalSpent: 0,
-          };
-          setDoc(ref, { ...profile, createdAt: serverTimestamp() })
-            .catch((err) => reportError(err, 'create-profile', { toast: false }))
-            .finally(() => {
+          const emailLower = (currentUser.email || '').toLowerCase();
+          const isBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has(emailLower);
+
+          const bootstrapProfile = async () => {
+            let assignedRole: UserRole = isBootstrapAdmin ? 'admin' : 'customer';
+            let invitedName = '';
+            const inviteRef = emailLower ? doc(db, 'users', emailInviteDocId(emailLower)) : null;
+            if (inviteRef && !isBootstrapAdmin) {
+              try {
+                const inviteSnap = await getDoc(inviteRef);
+                if (inviteSnap.exists()) {
+                  const inviteData = inviteSnap.data() as UserProfile;
+                  if (inviteData.role) assignedRole = inviteData.role;
+                  if (inviteData.name) invitedName = inviteData.name;
+                }
+              } catch {
+                // Ignore if offline or no invite exists
+              }
+            }
+            const profile: UserProfile = {
+              uid: currentUser.uid,
+              email: currentUser.email || '',
+              role: assignedRole,
+              name: (currentUser.displayName || pendingName.current || invitedName || '').slice(0, 100),
+              totalOrders: 0,
+              totalSpent: 0,
+            };
+            try {
+              await setDoc(ref, { ...profile, createdAt: serverTimestamp() });
+              if (inviteRef && assignedRole !== 'customer') {
+                await deleteDoc(inviteRef).catch(() => undefined);
+              }
+            } catch (err) {
+              reportError(err, 'create-profile', { toast: false });
+            } finally {
               creatingFor.current = null;
-            });
-          setUserProfile(profile);
-          setLoading(false);
+            }
+            setUserProfile(profile);
+            setLoading(false);
+          };
+
+          bootstrapProfile();
         },
         (err) => {
           reportError(err, 'load-profile', { toast: false });
@@ -185,8 +249,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const value = useMemo<AuthContextType>(() => {
-    const isBootstrapAdmin = !!user && BOOTSTRAP_ADMIN_EMAILS.has((user.email || '').toLowerCase());
-    const role: UserRole | null = userProfile ? (isBootstrapAdmin ? 'admin' : userProfile.role) : null;
+    const isBootstrapAdmin = !!user && BOOTSTRAP_ADMIN_EMAILS.has((user.email || userProfile?.email || '').toLowerCase());
+    const role: UserRole | null = isBootstrapAdmin ? 'admin' : userProfile ? userProfile.role : null;
     return {
       user,
       userProfile,

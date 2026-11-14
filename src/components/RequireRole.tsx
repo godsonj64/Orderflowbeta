@@ -4,12 +4,13 @@ import { ArrowLeft, Eye, EyeOff, Lock, LogOut, ShieldAlert, ShieldCheck } from '
 import type { UserRole } from '../types';
 import { authErrorMessage, useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
+import { brandThemeStyle } from '../lib/theme';
 import { PageSpinner, Spinner } from './ui';
 
 /** Route guard: renders children only for the given roles, with a dedicated OrderFlow Admin Access Portal UI. */
 export function RequireRole({ roles, children }: { roles: UserRole[]; children: React.ReactNode }) {
   const { loading, user, userProfile, role, signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword, logout } = useAuth();
-  const { profile, status } = useStore();
+  const { profile, status, theme } = useStore();
 
   const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
   const [name, setName] = useState('');
@@ -59,17 +60,17 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
 
   if (!userProfile) {
     return (
-      <div className="min-h-[100dvh] bg-[#F8F7F4] text-gray-900 font-sans flex flex-col justify-between p-4 sm:p-8 relative overflow-hidden">
+      <div style={brandThemeStyle(theme)} className="min-h-[100dvh] bg-[#F6F7F5] text-ink font-sans flex flex-col justify-between p-4 sm:p-8 relative overflow-hidden">
         {/* Subtle architectural top bar */}
         <header className="relative z-10 max-w-6xl w-full mx-auto flex items-center justify-between">
           <Link
             to="/"
-            className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-xl px-3.5 py-2 shadow-2xs transition"
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-muted hover:text-ink bg-white border border-line rounded-btn px-3.5 py-2 shadow-2xs transition"
           >
             <ArrowLeft size={15} />
             <span>Back to Storefront</span>
           </Link>
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-gray-200 text-xs font-medium text-gray-600 shadow-2xs">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-line text-xs font-semibold text-ink shadow-2xs">
             <span
               className={`w-2 h-2 rounded-full ${
                 status.state === 'open' ? 'bg-emerald-500' : status.state === 'paused' ? 'bg-amber-500' : 'bg-red-500'
@@ -81,21 +82,21 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
 
         {/* Centered Admin Access Portal Card */}
         <div className="relative z-10 my-auto py-8 flex items-center justify-center">
-          <div className="w-full max-w-[420px] bg-white rounded-3xl border border-gray-200/90 shadow-ios-lg p-6 sm:p-8 space-y-6">
+          <div className="w-full max-w-[420px] bg-white rounded-card border border-line shadow-ios-lg p-6 sm:p-8 space-y-6">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold uppercase tracking-widest text-[#287350]">
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold uppercase tracking-widest text-brand">
                   <ShieldCheck size={14} />
                   <span>Admin Access Portal</span>
                 </div>
-                <h1 className="font-display text-2xl sm:text-[26px] font-extrabold tracking-tight text-gray-900 leading-tight">
+                <h1 className="font-display text-2xl sm:text-[26px] font-extrabold tracking-tight text-ink leading-tight">
                   {mode === 'signin'
                     ? `${brandName} Workspace`
                     : mode === 'signup'
                       ? 'Create Staff Account'
                       : 'Reset Staff Password'}
                 </h1>
-                <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">
+                <p className="text-xs sm:text-sm text-muted leading-relaxed">
                   {mode === 'signin'
                     ? 'Sign in with your authorized team account to manage live orders, kitchen tickets, and store settings.'
                     : mode === 'signup'
@@ -107,22 +108,22 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                 <img
                   src={profile.logoUrl}
                   alt={brandName}
-                  className="w-11 h-11 rounded-2xl object-cover border border-gray-200 shrink-0"
+                  className="w-11 h-11 rounded-2xl object-cover border border-line shrink-0"
                 />
               ) : (
-                <div className="w-11 h-11 rounded-2xl bg-[#287350] text-white font-display font-extrabold text-base flex items-center justify-center shrink-0 shadow-xs">
+                <div className="w-11 h-11 rounded-2xl bg-brand text-on-brand font-display font-extrabold text-base flex items-center justify-center shrink-0 shadow-xs">
                   {brandName.charAt(0)}
                 </div>
               )}
             </div>
 
             {error && (
-              <div className="p-3.5 rounded-xl bg-red-50 border border-red-200/80 text-red-700 text-xs font-semibold leading-relaxed" role="alert">
+              <div className="p-3.5 rounded-btn bg-red-50 border border-red-200/80 text-red-700 text-xs font-semibold leading-relaxed" role="alert">
                 {error}
               </div>
             )}
             {notice && (
-              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-semibold leading-relaxed" role="status">
+              <div className="p-3.5 rounded-btn bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-semibold leading-relaxed" role="status">
                 {notice}
               </div>
             )}
@@ -130,7 +131,7 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
             <form onSubmit={handleSubmit} className="space-y-4">
               {mode === 'signup' && (
                 <div>
-                  <label className="block text-xs font-bold text-gray-800 mb-1.5">Full Name</label>
+                  <label className="block text-xs font-bold text-ink mb-1.5">Full Name</label>
                   <input
                     type="text"
                     value={name}
@@ -139,13 +140,13 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                     autoComplete="name"
                     maxLength={100}
                     required
-                    className="w-full px-3.5 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-[#287350] focus:ring-2 focus:ring-[#287350]/15 outline-none transition"
+                    className="w-full px-3.5 py-3 rounded-btn bg-soft border border-line text-sm text-ink placeholder:text-muted focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none transition"
                   />
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-bold text-gray-800 mb-1.5">Work Email</label>
+                <label className="block text-xs font-bold text-ink mb-1.5">Work Email</label>
                 <input
                   type="email"
                   value={email}
@@ -154,14 +155,14 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                   autoComplete="email"
                   inputMode="email"
                   required
-                  className="w-full px-3.5 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-[#287350] focus:ring-2 focus:ring-[#287350]/15 outline-none transition"
+                  className="w-full px-3.5 py-3 rounded-btn bg-soft border border-line text-sm text-ink placeholder:text-muted focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none transition"
                 />
               </div>
 
               {mode !== 'reset' && (
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-gray-800">Password</label>
+                    <label className="block text-xs font-bold text-ink">Password</label>
                     {mode === 'signin' && (
                       <button
                         type="button"
@@ -170,7 +171,7 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                           setError('');
                           setNotice('');
                         }}
-                        className="text-xs font-semibold text-[#287350] hover:underline"
+                        className="text-xs font-semibold text-brand hover:underline"
                       >
                         Forgot password?
                       </button>
@@ -185,12 +186,12 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                       autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                       minLength={6}
                       required
-                      className="w-full pl-3.5 pr-10 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-[#287350] focus:ring-2 focus:ring-[#287350]/15 outline-none transition"
+                      className="w-full pl-3.5 pr-10 py-3 rounded-btn bg-soft border border-line text-sm text-ink placeholder:text-muted focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none transition"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword((v) => !v)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-700 transition"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-muted hover:text-ink transition"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
                       {showPassword ? <Eye size={16} /> : <EyeOff size={16} />}
@@ -202,7 +203,7 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
               <button
                 type="submit"
                 disabled={busy}
-                className="w-full min-h-[46px] bg-gray-900 hover:bg-black text-white rounded-xl py-3 px-4 text-sm font-bold flex items-center justify-center gap-2 shadow-xs transition active:scale-[0.99] disabled:opacity-60"
+                className="w-full min-h-[46px] bg-brand hover:opacity-95 text-on-brand rounded-btn py-3 px-4 text-sm font-bold flex items-center justify-center gap-2 shadow-xs transition active:scale-[0.99] disabled:opacity-60"
               >
                 {busy ? <Spinner size={16} /> : <Lock size={15} />}
                 <span>
@@ -223,13 +224,13 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                   setError('');
                   setNotice('');
                 }}
-                className="w-full text-center text-xs font-bold text-gray-600 hover:text-gray-900 py-1"
+                className="w-full text-center text-xs font-bold text-muted hover:text-ink py-1"
               >
                 ← Back to staff sign-in
               </button>
             ) : (
               <>
-                <p className="text-center text-xs text-gray-500">
+                <p className="text-center text-xs text-muted">
                   {mode === 'signin' ? (
                     <>
                       First time setting up your account?{' '}
@@ -240,7 +241,7 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                           setError('');
                           setNotice('');
                         }}
-                        className="font-bold text-[#287350] hover:underline"
+                        className="font-bold text-brand hover:underline"
                       >
                         Create account
                       </button>
@@ -255,24 +256,24 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
                           setError('');
                           setNotice('');
                         }}
-                        className="font-bold text-[#287350] hover:underline"
+                        className="font-bold text-brand hover:underline"
                       >
                         Sign in
                       </button>
                     </>
                   )}
                 </p>
-                <div className="flex items-center gap-3 text-[11px] font-medium text-gray-400">
-                  <span className="h-px flex-1 bg-gray-200" />
+                <div className="flex items-center gap-3 text-[11px] font-medium text-muted">
+                  <span className="h-px flex-1 bg-line" />
                   <span>OR CONTINUE WITH</span>
-                  <span className="h-px flex-1 bg-gray-200" />
+                  <span className="h-px flex-1 bg-line" />
                 </div>
 
                 <button
                   type="button"
                   onClick={handleGoogle}
                   disabled={busy}
-                  className="w-full min-h-[44px] bg-white hover:bg-gray-50 border border-gray-200 text-gray-800 rounded-xl py-2.5 px-4 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2.5 transition disabled:opacity-60"
+                  className="w-full min-h-[44px] bg-white hover:bg-soft border border-line text-ink rounded-btn py-2.5 px-4 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2.5 transition disabled:opacity-60"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
@@ -287,7 +288,7 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
           </div>
         </div>
 
-        <footer className="relative z-10 text-center text-xs text-gray-400 font-mono">
+        <footer className="relative z-10 text-center text-xs text-muted font-mono">
           OrderFlow Operations Console · Authorized Personnel Only
         </footer>
       </div>
@@ -296,8 +297,8 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
 
   if (!role || !roles.includes(role)) {
     return (
-      <div className="min-h-[100dvh] bg-[#F8F7F4] text-gray-900 font-sans flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white rounded-3xl border border-gray-200/90 shadow-ios-lg p-7 sm:p-8 text-center space-y-5">
+      <div style={brandThemeStyle(theme)} className="min-h-[100dvh] bg-[#F6F7F5] text-ink font-sans flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-card border border-line shadow-ios-lg p-7 sm:p-8 text-center space-y-5">
           <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200/80 text-amber-600 flex items-center justify-center mx-auto">
             <ShieldAlert size={24} />
           </div>
@@ -305,25 +306,25 @@ export function RequireRole({ roles, children }: { roles: UserRole[]; children: 
             <span className="text-[11px] font-mono font-semibold uppercase tracking-widest text-amber-700">
               Insufficient Permissions
             </span>
-            <h1 className="font-display text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight">
+            <h1 className="font-display text-xl sm:text-2xl font-extrabold text-ink tracking-tight">
               Staff Role Required
             </h1>
-            <p className="text-xs sm:text-sm text-gray-500 leading-relaxed">
-              Signed in as <span className="font-semibold text-gray-800">{userProfile.email}</span> (
+            <p className="text-xs sm:text-sm text-muted leading-relaxed">
+              Signed in as <span className="font-semibold text-ink">{userProfile.email}</span> (
               <span className="font-mono text-xs">{role || 'customer'}</span>). Ask the store owner or administrator to grant your account staff or manager access.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
             <Link
               to="/"
-              className="flex-1 min-h-[44px] bg-gray-900 hover:bg-black text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center transition"
+              className="flex-1 min-h-[44px] bg-brand hover:opacity-95 text-on-brand px-5 py-2.5 rounded-btn text-sm font-bold flex items-center justify-center transition"
             >
               Back to Storefront
             </Link>
             <button
               type="button"
               onClick={logout}
-              className="min-h-[44px] bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition"
+              className="min-h-[44px] bg-soft hover:bg-gray-200 text-ink px-4 py-2.5 rounded-btn text-sm font-semibold flex items-center justify-center gap-1.5 transition"
             >
               <LogOut size={15} />
               <span>Switch account</span>

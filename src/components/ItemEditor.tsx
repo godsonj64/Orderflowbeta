@@ -121,7 +121,7 @@ function GroupEditor({
             type="checkbox"
             checked={group.required}
             onChange={(e) => set({ required: e.target.checked, minSelection: e.target.checked ? Math.max(1, group.minSelection) : 0 })}
-            className="w-4 h-4 accent-gray-900"
+            className="w-4 h-4 accent-brand"
           />
           Required
         </label>
@@ -312,18 +312,18 @@ export function ItemEditor({ open, item, defaultCategoryId, categories, nextDisp
           <div className="flex items-center gap-2">
             {item && (
               <>
-                <button type="button" onClick={() => setConfirmDelete(true)} className="p-3 rounded-2xl text-red-600 hover:bg-red-50" aria-label="Delete item">
+                <button type="button" onClick={() => setConfirmDelete(true)} className="p-3 rounded-btn text-red-600 hover:bg-red-50" aria-label="Delete item">
                   <Trash2 size={18} />
                 </button>
-                <button type="button" onClick={() => save(true)} disabled={saving} className="p-3 rounded-2xl text-gray-600 hover:bg-gray-100" title="Duplicate" aria-label="Duplicate item">
+                <button type="button" onClick={() => save(true)} disabled={saving} className="p-3 rounded-btn text-muted hover:bg-soft" title="Duplicate" aria-label="Duplicate item">
                   <Copy size={18} />
                 </button>
               </>
             )}
-            <button type="button" onClick={onClose} className="ml-auto px-5 py-3 rounded-2xl bg-gray-100 font-semibold">
+            <button type="button" onClick={onClose} className="ml-auto px-5 py-3 rounded-btn bg-soft text-ink font-semibold">
               Cancel
             </button>
-            <button type="button" onClick={() => save()} disabled={saving || uploading} className="px-6 py-3 rounded-2xl bg-gray-900 text-white font-semibold flex items-center gap-2 disabled:opacity-50">
+            <button type="button" onClick={() => save()} disabled={saving || uploading} className="px-6 py-3 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold flex items-center gap-2 disabled:opacity-50">
               {saving && <Spinner size={16} />} Save
             </button>
           </div>
@@ -405,7 +405,7 @@ export function ItemEditor({ open, item, defaultCategoryId, categories, nextDisp
                     key={tag}
                     type="button"
                     onClick={() => set({ dietaryTags: on ? draft.dietaryTags.filter((t) => t !== tag) : [...draft.dietaryTags, tag] })}
-                    className={`px-3.5 py-2 rounded-full text-sm font-semibold border ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-200 text-gray-700'}`}
+                    className={`px-3.5 py-2 rounded-full text-sm font-semibold border transition ${on ? 'bg-brand text-on-brand border-brand' : 'bg-white border-line text-ink hover:bg-soft'}`}
                   >
                     {tag}
                   </button>
@@ -414,7 +414,7 @@ export function ItemEditor({ open, item, defaultCategoryId, categories, nextDisp
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-100 divide-y divide-gray-100 px-4">
+          <div className="rounded-card border border-line divide-y divide-line px-4">
             <Toggle label="Show on menu" description="Hidden items are not visible to customers." checked={draft.active} onChange={(v) => set({ active: v })} />
             <Toggle label="Sold out" description="Still visible, but customers can't order it." checked={draft.isSoldOut} onChange={(v) => set({ isSoldOut: v })} />
             <Toggle label="Featured" description="Pin to the top row of the menu." checked={draft.isFeatured} onChange={(v) => set({ isFeatured: v })} />
@@ -423,7 +423,7 @@ export function ItemEditor({ open, item, defaultCategoryId, categories, nextDisp
           <div className="space-y-3">
             <div>
               <p className="text-sm font-semibold">Options & add-ons</p>
-              <p className="text-xs text-gray-500">Sizes, milk choices, extra toppings… Required groups must be chosen before adding to cart.</p>
+              <p className="text-xs text-muted">Sizes, milk choices, extra toppings… Required groups must be chosen before adding to cart.</p>
             </div>
             {draft.modifierGroups.map((g, i) => (
               <GroupEditor
@@ -443,7 +443,7 @@ export function ItemEditor({ open, item, defaultCategoryId, categories, nextDisp
                   type="button"
                   onClick={() => set({ modifierGroups: [...draft.modifierGroups, make()] })}
                   disabled={draft.modifierGroups.length >= 20}
-                  className="px-3.5 py-2 rounded-full text-sm font-semibold bg-gray-100 hover:bg-gray-200 flex items-center gap-1"
+                  className="px-3.5 py-2 rounded-full text-sm font-semibold bg-accent text-on-accent border border-brand/15 hover:opacity-90 flex items-center gap-1 transition"
                 >
                   <Plus size={15} /> {label === 'Blank' ? 'Custom group' : `${label} group`}
                 </button>

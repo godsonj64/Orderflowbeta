@@ -57,26 +57,26 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
   const paused = status.state === 'paused';
   const accepting = profile.isAcceptingOrders;
 
-  const surface = dark ? 'bg-[#232D23] border-white/10 text-[#FAF6F0]' : 'bg-white border-gray-200/80 text-gray-900';
-  const chip = dark ? 'bg-white/10 hover:bg-white/15 text-[#FAF6F0]' : 'bg-gray-100 hover:bg-gray-200 text-gray-800';
-  const muted = dark ? 'text-[#9EB09E]' : 'text-gray-500';
-  const divider = dark ? 'border-white/10' : 'border-gray-100';
+  const surface = dark ? 'bg-[#1D261F] border-white/10 text-[#FAF6F0]' : 'bg-white border-line shadow-ios-sm text-ink';
+  const chip = dark ? 'bg-white/10 hover:bg-white/15 text-[#FAF6F0]' : 'bg-accent/70 hover:bg-accent text-on-accent border border-brand/15';
+  const muted = dark ? 'text-[#9EB09E]' : 'text-muted';
+  const divider = dark ? 'border-white/10' : 'border-line';
 
   return (
-    <div className={`rounded-2xl border p-2.5 sm:px-4 sm:py-3 flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-4 ${surface}`}>
+    <div className={`rounded-card border p-2.5 sm:px-4 sm:py-3 flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-4 ${surface}`}>
       {/* Row 1 on mobile: Online Toggle + Wait Time Stepper */}
       <div className="flex items-center justify-between sm:justify-start gap-3">
         <button
           type="button"
           disabled={busy}
           onClick={toggleAccepting}
-          className={`min-h-[42px] flex items-center gap-2 rounded-xl px-3.5 py-2 font-bold text-xs sm:text-sm transition whitespace-nowrap shrink-0 ${
-            accepting ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'
+          className={`min-h-[42px] flex items-center gap-2 rounded-btn px-3.5 py-2 font-bold text-xs sm:text-sm transition whitespace-nowrap shrink-0 shadow-2xs ${
+            accepting ? 'bg-brand hover:opacity-95 text-on-brand' : 'bg-red-600 hover:bg-red-700 text-white'
           }`}
           role="switch"
           aria-checked={accepting}
         >
-          <span className="w-2 h-2 rounded-full bg-white" />
+          <span className="w-2 h-2 rounded-full bg-current" />
           <span>{accepting ? 'Accepting orders' : 'Ordering off'}</span>
         </button>
 
@@ -116,7 +116,7 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
               type="button"
               disabled={busy}
               onClick={() => update({ pausedUntil: null })}
-              className="min-h-[40px] rounded-xl px-3.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap shrink-0"
+              className="min-h-[40px] rounded-btn px-3.5 py-1.5 text-xs font-bold bg-brand hover:opacity-95 text-on-brand whitespace-nowrap shrink-0"
             >
               Resume now
             </button>

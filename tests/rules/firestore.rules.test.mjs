@@ -1,12 +1,18 @@
 import fs from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, getDocs, collection, query, where, Timestamp, serverTimestamp, deleteField } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, getDocs, collection, query, where, Timestamp, serverTimestamp, deleteField, setLogLevel } from 'firebase/firestore';
+
+// Denied writes are expected here; keep the output to the ok / FAIL lines.
+setLogLevel('silent');
 
 const RULES = fs.readFileSync(process.env.RULES_PATH || new URL('../../firestore.rules', import.meta.url), 'utf8');
 const env = await initializeTestEnvironment({
   projectId: 'demo-orderflow',
   firestore: { rules: RULES, host: '127.0.0.1', port: 8080 },
 });
+
+// Start from an empty database so the suite can be re-run against an emulator that is already running.
+await env.clearFirestore();
 
 const now = Timestamp.now();
 const baseOrder = (over) => ({
@@ -31,6 +37,7 @@ await env.withSecurityRulesDisabled(async (ctx) => {
     user('driver1', 'driver'),
     user('cust1', 'customer'),
     user('cust2', 'customer'),
+    user('cust3', 'customer'),
   ]);
   await setDoc(doc(db, 'restaurant', 'profile'), { name: 'Huddle', isAcceptingOrders: true, isCashPaymentEnabled: true, averageRating: 4.5, totalRatings: 10 });
   await setDoc(doc(db, 'categories', 'mains'), { name: 'Mains', displayOrder: 0, active: true });
@@ -229,6 +236,37 @@ await check('customer cannot read other users', () => assertFails(getDoc(doc(cus
 await check('manager can promote a customer to staff', () => assertSucceeds(updateDoc(doc(manager, 'users', 'cust2'), { role: 'staff' })));
 await check('manager cannot create an admin', () => assertFails(updateDoc(doc(manager, 'users', 'cust2'), { role: 'admin' })));
 
+console.log('\nTeam invitations');
+await env.withSecurityRulesDisabled(async (ctx) => {
+  const db = ctx.firestore();
+  await setDoc(doc(db, 'users', 'invite_newcook@example.com'), { uid: 'invite_newcook@example.com', email: 'newcook@example.com', role: 'staff', name: 'New Cook' });
+  await setDoc(doc(db, 'users', 'invite_cust3@example.com'), { uid: 'invite_cust3@example.com', email: 'cust3@example.com', role: 'driver' });
+});
+const invited = as('cookuid', { email: 'newcook@example.com' });
+const unverified = env.authenticatedContext('fakeuid', { email: 'newcook@example.com', email_verified: false }).firestore();
+await check('manager can invite a team member by email', () =>
+  assertSucceeds(setDoc(doc(manager, 'users', 'invite_driver9@example.com'), { uid: 'invite_driver9@example.com', email: 'driver9@example.com', role: 'driver', name: 'Nine' })));
+await check('manager cannot invite an admin', () =>
+  assertFails(setDoc(doc(manager, 'users', 'invite_boss@example.com'), { uid: 'invite_boss@example.com', email: 'boss@example.com', role: 'admin' })));
+await check('customers cannot invite themselves', () =>
+  assertFails(setDoc(doc(customer, 'users', 'invite_cust1@example.com'), { uid: 'invite_cust1@example.com', email: 'cust1@example.com', role: 'manager' })));
+await check('an unverified email cannot read or claim an invite', async () => {
+  await assertFails(getDoc(doc(unverified, 'users', 'invite_newcook@example.com')));
+  await assertFails(setDoc(doc(unverified, 'users', 'fakeuid'), { uid: 'fakeuid', email: 'newcook@example.com', role: 'staff', totalOrders: 0, totalSpent: 0 }));
+});
+await check('invited person can read their invite and sign up with the invited role', async () => {
+  await assertSucceeds(getDoc(doc(invited, 'users', 'invite_newcook@example.com')));
+  await assertSucceeds(setDoc(doc(invited, 'users', 'cookuid'), { uid: 'cookuid', email: 'newcook@example.com', role: 'staff', name: 'New Cook', totalOrders: 0, totalSpent: 0, createdAt: serverTimestamp() }));
+});
+await check('invited person cannot take a higher role than invited', () =>
+  assertFails(setDoc(doc(as('x1', { email: 'driver9@example.com' }), 'users', 'x1'), { uid: 'x1', email: 'driver9@example.com', role: 'manager', totalOrders: 0, totalSpent: 0 })));
+await check('existing customer can claim an invited role, nothing more', async () => {
+  await assertFails(updateDoc(doc(as('cust3'), 'users', 'cust3'), { role: 'manager' }));
+  await assertSucceeds(updateDoc(doc(as('cust3'), 'users', 'cust3'), { role: 'driver' }));
+});
+await check('a person without an invite stays a customer', () =>
+  assertFails(updateDoc(doc(customer, 'users', 'cust1'), { role: 'staff' })));
+
 console.log('\nRestaurant profile');
 await check('staff can pause ordering', () =>
   assertSucceeds(updateDoc(doc(staff, 'restaurant', 'profile'), { pausedUntil: Timestamp.fromMillis(Date.now() + 900000), estimatedPrepMinutes: 35 })));
@@ -238,6 +276,23 @@ await check('manager can update settings and theme', () =>
 await check('manager cannot fake the average rating', () => assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { averageRating: 5 })));
 await check('tax rate must be sane', () => assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { taxRate: 80 })));
 await check('customers cannot change the profile', () => assertFails(updateDoc(doc(customer, 'restaurant', 'profile'), { isAcceptingOrders: false })));
+await check('manager can save a fully filled-in settings document (stays inside the rules evaluation limit)', () =>
+  assertSucceeds(updateDoc(doc(manager, 'restaurant', 'profile'), {
+    name: 'Huddle Snack Stop', description: 'Burgers', address: '408 Congress Ave', phone: '(512) 555-0194', email: 'orders@example.com',
+    deliveryFee: 3.99, freeDeliveryThreshold: 30, minimumOrder: 10, serviceFeePercent: 5, taxRate: 8.25, promotionalZeroFee: false,
+    isDeliveryEnabled: true, isPickupEnabled: true, isSchedulePickupEnabled: true, isCardPaymentEnabled: true, isCashPaymentEnabled: true, isTippingEnabled: true,
+    scheduleDaysAhead: 7, estimatedPrepMinutes: 20, timezone: 'America/Chicago', logoUrl: 'data:image/webp;base64,AAAA', bannerUrl: 'https://example.com/b.jpg',
+    businessHours: { Monday: { open: '09:00', close: '17:00', closed: false } }, isMarqueeEnabled: true, marqueeText: 'FREE DELIVERY', marqueeImageUrl: '',
+    marqueeImageUrls: [], isGalleryEnabled: false, galleryImageUrls: [], theme: { preset: 'forest' }, social: { instagram: 'https://instagram.com/x' },
+    location: { lat: 30.2672, lng: -97.7431, label: 'Trailer' }, starterMenuCleared: true,
+  })));
+await check('settings reject unknown fields and wrong types', async () => {
+  await assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { hacked: true }));
+  await assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { deliveryFee: 'free' }));
+  await assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { isCashPaymentEnabled: 'yes' }));
+  await assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { location: { lat: 500, lng: 0 } }));
+  await assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { description: 'x'.repeat(1001) }));
+});
 
 console.log('\nBasic mode follows the store settings');
 await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'restaurant', 'profile'), { isCashPaymentEnabled: false }));

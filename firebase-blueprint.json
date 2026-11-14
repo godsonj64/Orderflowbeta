@@ -658,6 +658,10 @@
         "updatedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "checkoutKey": {
+          "type": "string",
+          "description": "Set by the server; a repeated checkout request with the same key returns this order."
         }
       },
       "required": [
@@ -667,6 +671,30 @@
         "total",
         "type",
         "createdAt"
+      ]
+    },
+    "DeliveryProof": {
+      "title": "DeliveryProof",
+      "description": "Proof-of-delivery photo, stored next to the order so order lists stay small.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Data URL of the compressed photo."
+        },
+        "driverId": {
+          "type": "string"
+        },
+        "driverName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "image"
       ]
     }
   },
@@ -706,6 +734,12 @@
         "$ref": "#/entities/Order"
       },
       "description": "Customer orders."
+    },
+    "/orders/{orderId}/proof/{proofId}": {
+      "schema": {
+        "$ref": "#/entities/DeliveryProof"
+      },
+      "description": "Proof-of-delivery photo for an order (document id: photo)."
     }
   }
 }

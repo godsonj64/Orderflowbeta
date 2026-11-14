@@ -13,10 +13,10 @@ interface Props {
 
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="bg-white rounded-3xl border border-gray-100 p-4 sm:p-5 space-y-4">
+    <section className="bg-white rounded-card border border-line shadow-ios-sm p-4 sm:p-5 space-y-4">
       <div>
-        <h3 className="font-bold">{title}</h3>
-        {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
+        <h3 className="font-display font-extrabold text-ink">{title}</h3>
+        {description && <p className="text-xs text-muted mt-0.5">{description}</p>}
       </div>
       {children}
     </section>
@@ -31,8 +31,8 @@ function Choice<T extends string>({ value, options, onChange }: { value: T; opti
           key={v}
           type="button"
           onClick={() => onChange(v)}
-          className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-2.5 text-xs font-semibold transition ${
-            value === v ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-white hover:bg-gray-50'
+          className={`flex flex-col items-center gap-1 rounded-btn border px-2 py-2.5 text-xs font-bold transition ${
+            value === v ? 'border-brand bg-brand text-on-brand shadow-xs' : 'border-line bg-white text-ink hover:bg-soft'
           }`}
         >
           {Icon && <Icon size={18} />}
@@ -144,15 +144,15 @@ export function AppearanceSettings({ draft, update }: Props) {
                 key={p.id}
                 type="button"
                 onClick={() => applyPreset(p.id)}
-                className={`text-left rounded-2xl border p-2.5 transition ${active ? 'border-gray-900 ring-2 ring-gray-900' : 'border-gray-200 hover:border-gray-400'}`}
+                className={`text-left rounded-btn border p-2.5 transition ${active ? 'border-brand ring-2 ring-brand bg-accent/25' : 'border-line hover:border-brand/50'}`}
               >
                 <div className="h-14 rounded-xl flex items-end gap-1 p-1.5" style={{ background: s.page, border: `1px solid ${s.line}` }}>
                   <span className="w-6 h-6 rounded-full" style={{ background: p.brandColor }} />
                   <span className="w-4 h-4 rounded-full" style={{ background: p.accentColor }} />
                   <span className="ml-auto w-8 h-4 rounded" style={{ background: s.card }} />
                 </div>
-                <div className="mt-1.5 text-sm font-bold">{p.name}</div>
-                <div className="text-[11px] text-gray-500 leading-tight">{p.description}</div>
+                <div className="mt-1.5 text-sm font-bold text-ink">{p.name}</div>
+                <div className="text-[11px] text-muted leading-tight">{p.description}</div>
               </button>
             );
           })}

@@ -31,7 +31,7 @@ type Surface = 'store' | 'admin';
 
 const SURFACE = {
   store: { panel: 'bg-card text-ink', line: 'border-line', close: 'bg-soft text-ink hover:opacity-80' },
-  admin: { panel: 'bg-white text-gray-900', line: 'border-gray-100', close: 'bg-gray-100 text-gray-700 hover:bg-gray-200' },
+  admin: { panel: 'bg-white text-ink', line: 'border-line', close: 'bg-soft text-ink hover:bg-gray-200/70' },
 } as const;
 
 interface SheetProps {
@@ -89,7 +89,7 @@ export function Sheet({ open, onClose, title, children, footer, size = 'md', sur
             <div className="absolute left-1/2 -translate-x-1/2 top-2 h-1 w-10 rounded-full bg-current opacity-15 sm:hidden z-10 pointer-events-none" />
             {!hideHeader && (
               <div className={`flex items-center justify-between gap-3 px-5 pt-5 pb-3 border-b ${s.line} shrink-0`}>
-                <h2 id={titleId} className="text-lg font-bold truncate">
+                <h2 id={titleId} className="font-display text-lg font-extrabold tracking-tight truncate">
                   {title}
                 </h2>
                 <button type="button" onClick={onClose} aria-label="Close" className={`p-2 rounded-full transition ${s.close}`}>
@@ -145,10 +145,10 @@ export function Toggle({ checked, onChange, label, description, disabled }: Togg
       className="w-full flex items-start justify-between gap-4 py-3 text-left disabled:opacity-50"
     >
       <span className="min-w-0">
-        <span className="block font-semibold text-gray-900 text-sm">{label}</span>
-        {description && <span className="block text-xs text-gray-500 mt-0.5 leading-relaxed">{description}</span>}
+        <span className="block font-semibold text-ink text-sm">{label}</span>
+        {description && <span className="block text-xs text-muted mt-0.5 leading-relaxed">{description}</span>}
       </span>
-      <span className={`relative shrink-0 mt-0.5 w-11 h-6 rounded-full transition-colors ${checked ? 'bg-emerald-600' : 'bg-gray-300'}`}>
+      <span className={`relative shrink-0 mt-0.5 w-11 h-6 rounded-full transition-colors ${checked ? 'bg-brand' : 'bg-gray-300'}`}>
         <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
       </span>
     </button>
@@ -182,12 +182,10 @@ export function ConfirmDialog({
   onCancel,
   children,
 }: ConfirmDialogProps) {
-  const cancelCls = surface === 'store' ? 'bg-soft text-ink' : 'bg-gray-100 text-gray-700 hover:bg-gray-200';
+  const cancelCls = surface === 'store' ? 'bg-soft text-ink' : 'bg-soft text-ink hover:bg-gray-200/70';
   const confirmCls = danger
     ? 'bg-red-600 text-white hover:bg-red-700'
-    : surface === 'store'
-      ? 'bg-brand text-on-brand'
-      : 'bg-gray-900 text-white hover:bg-black';
+    : 'bg-brand text-on-brand hover:opacity-95';
   return (
     <Sheet
       open={open}
@@ -197,14 +195,14 @@ export function ConfirmDialog({
       surface={surface}
       footer={
         <div className="flex gap-3">
-          <button type="button" onClick={onCancel} disabled={busy} className={`flex-1 py-3 rounded-2xl font-semibold text-sm transition ${cancelCls}`}>
+          <button type="button" onClick={onCancel} disabled={busy} className={`flex-1 py-3 rounded-btn font-semibold text-sm transition ${cancelCls}`}>
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className={`flex-1 py-3 rounded-2xl font-bold text-sm transition flex items-center justify-center gap-2 disabled:opacity-60 ${confirmCls}`}
+            className={`flex-1 py-3 rounded-btn font-bold text-sm transition flex items-center justify-center gap-2 disabled:opacity-60 ${confirmCls}`}
           >
             {busy && <Spinner size={18} />}
             {confirmLabel}
@@ -212,7 +210,7 @@ export function ConfirmDialog({
         </div>
       }
     >
-      <div className={`p-5 text-sm leading-relaxed ${surface === 'store' ? 'text-muted' : 'text-gray-600'}`}>
+      <div className="p-5 text-sm leading-relaxed text-muted">
         {message}
         {children}
       </div>
@@ -224,13 +222,13 @@ export function ConfirmDialog({
 export function Field({ label, hint, children, className = '' }: { label: React.ReactNode; hint?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
     <label className={`block ${className}`}>
-      <span className="block text-xs font-semibold text-gray-700 mb-1.5">{label}</span>
+      <span className="block text-xs font-semibold text-ink mb-1.5">{label}</span>
       {children}
-      {hint && <span className="block text-xs text-gray-500 mt-1 leading-relaxed">{hint}</span>}
+      {hint && <span className="block text-xs text-muted mt-1 leading-relaxed">{hint}</span>}
     </label>
   );
 }
 
 export const adminInput =
-  'w-full border border-gray-200 bg-white rounded-xl px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-gray-900/15 focus:border-gray-900 outline-none transition disabled:bg-gray-50 disabled:text-gray-400';
+  'w-full border border-line bg-white rounded-btn px-3.5 py-2.5 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none transition disabled:bg-soft disabled:text-muted';
 

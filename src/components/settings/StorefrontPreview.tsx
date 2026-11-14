@@ -37,7 +37,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
           <div className="w-6 h-6 rounded-full bg-brand text-on-brand flex items-center justify-center font-bold text-[10px]">
             {(profile.name || 'K').charAt(0)}
           </div>
-          <div className="font-display font-extrabold text-[13px] tracking-tight truncate">Home</div>
+          <div className="font-display font-extrabold text-[13px] tracking-tight truncate max-w-[180px]">{profile.name || 'Restaurant'}</div>
           <div className="relative w-6 h-6 rounded-full flex items-center justify-center text-ink">
             <Bell size={14} />
             <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-500" />

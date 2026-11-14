@@ -188,14 +188,25 @@ async function authenticate(req: Request): Promise<AuthedUser> {
   }
   let profile: UserProfile | null = null;
   let role: UserRole = 'customer';
-  try {
-    const snap = await db.collection('users').doc(decoded.uid).get();
-    profile = snap.exists ? (snap.data() as UserProfile) : null;
-    if (profile?.role) role = profile.role;
-  } catch {
-    // If admin SDK has no credentials, role safely defaults to customer
+  // Without database access (basic mode) there is nothing to look up: everyone is a customer.
+  if (dbAccess?.ok !== false) {
+    try {
+      // The profile and a possible team invitation (users/invite_<email>) in one round trip.
+      const userRef = db.collection('users').doc(decoded.uid);
+      const inviteRef =
+        decoded.email && decoded.email_verified !== false ? db.collection('users').doc(`invite_${decoded.email.toLowerCase()}`) : null;
+      const [snap, inviteSnap] = await db.getAll(...(inviteRef ? [userRef, inviteRef] : [userRef]));
+      profile = snap.exists ? (snap.data() as UserProfile) : null;
+      if (profile?.role) role = profile.role;
+      if (role === 'customer' && inviteSnap?.exists) {
+        const invited = inviteSnap.data() as UserProfile;
+        if (invited?.role) role = invited.role;
+      }
+    } catch {
+      // If admin SDK has no credentials, role safely defaults to customer
+    }
   }
-  if (BOOTSTRAP_ADMINS.includes((decoded.email || '').toLowerCase())) role = 'admin';
+  if (decoded.email_verified !== false && BOOTSTRAP_ADMINS.includes((decoded.email || '').toLowerCase())) role = 'admin';
   return { uid: decoded.uid, email: decoded.email || profile?.email || '', role, profile };
 }
 
@@ -463,6 +474,14 @@ async function startServer() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    // Stripe renders Apple Pay / Google Pay inside its own frames: they need the payment
+    // permission too, otherwise the wallet buttons silently disappear from checkout.
+    res.setHeader('Permissions-Policy', 'geolocation=(self), payment=(self "https://js.stripe.com" "https://hooks.stripe.com")');
+    next();
+  });
 
   // Stripe webhooks need the raw body for signature verification, so this route is
   // registered before the JSON body parser.
@@ -515,6 +534,16 @@ async function startServer() {
 
   app.use(express.json({ limit: '200kb' }));
 
+  // Everything under /api/orders reads and writes orders with the Admin SDK. Without
+  // database access answer immediately (the storefront then uses basic mode) instead of
+  // letting the request hang on a database call that can never succeed.
+  app.use('/api/orders', (_req, _res, next) => {
+    hasDatabaseAccess().then(
+      (ok) => next(ok ? undefined : new HttpError(503, 'Online ordering is temporarily unavailable. Please try again shortly.', { code: NO_DATABASE })),
+      next,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Public endpoints
   // -------------------------------------------------------------------------
@@ -541,24 +570,13 @@ async function startServer() {
     }),
   );
 
-  // What the storefront may offer right now. Card payments need the database: the
-  // server must be able to create the order and record the payment.
-  app.get(
-    '/api/config',
-    route(async (_req, res) => {
-      const database = await hasDatabaseAccess();
-      res.set('Cache-Control', 'no-store');
-      res.json({ cardPayments: stripeEnabled() && database, ordering: database ? 'server' : 'direct' });
-    }),
-  );
-
   // -------------------------------------------------------------------------
   // Checkout: the server prices the order from Firestore data. The client only
   // sends item ids, quantities and choices.
   // -------------------------------------------------------------------------
 
   // 3-second micro-cache for restaurant/profile so simultaneous rush-hour checkouts
-  // don't hammer the single profile document on every request.
+  // and initial splash screen loads don't hammer the single profile document on every request.
   let cachedProfile: { at: number; data: RestaurantProfile | null } | null = null;
   async function loadRestaurantProfile(): Promise<RestaurantProfile> {
     if (cachedProfile && Date.now() - cachedProfile.at < 3000 && cachedProfile.data) {
@@ -620,6 +638,19 @@ async function startServer() {
     }
     return null;
   }
+
+  // What the storefront may offer right now. Card payments need the database: the
+  // server must be able to create the order and record the payment. The profile is
+  // included so the first paint (splash screen, theme) does not wait for Firestore.
+  app.get(
+    '/api/config',
+    route(async (_req, res) => {
+      const database = await hasDatabaseAccess();
+      const profile = database ? await loadRestaurantProfile().catch(() => null) : null;
+      res.set('Cache-Control', 'no-store');
+      res.json({ cardPayments: stripeEnabled() && database, ordering: database ? 'server' : 'direct', profile });
+    }),
+  );
 
   app.post(
     '/api/checkout',
@@ -735,9 +766,12 @@ async function startServer() {
       const activeCategoryIds = new Set(
         categorySnaps.filter((s) => s.exists && (s.data() as MenuCategory).active !== false).map((s) => s.id),
       );
-      if (items.size === 0) {
-        const anyItemSnap = await db.collection('items').limit(1).get();
-        if (anyItemSnap.empty) {
+      if (items.size === 0 && !profile.starterMenuCleared) {
+        const [anyItemSnap, anyCategorySnap] = await Promise.all([
+          db.collection('items').limit(1).get(),
+          db.collection('categories').limit(1).get(),
+        ]);
+        if (anyItemSnap.empty && anyCategorySnap.empty) {
           for (const item of DEFAULT_ITEMS) items.set(item.id, item);
           for (const cat of DEFAULT_CATEGORIES) if (cat.active !== false) activeCategoryIds.add(cat.id);
         }
