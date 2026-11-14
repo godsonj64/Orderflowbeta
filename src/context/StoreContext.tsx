@@ -20,6 +20,8 @@ interface StoreContextValue {
   usingDefaultCatalog: boolean;
   /** Persists the starter categories and items into Firestore before any item/category mutation. */
   ensureCatalogPersisted: () => Promise<void>;
+  /** Clears the starter or current menu so the owner can build their menu from a completely blank slate. */
+  clearMenuCatalog: () => Promise<void>;
   menuLoading: boolean;
   /** Menu as seen by customers: active items in active categories (sold-out items included). */
   catalog: Catalog;
@@ -41,9 +43,31 @@ export const useStore = () => {
 };
 
 const STRIPE_PUBLIC_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined;
+const PROFILE_CACHE_KEY = 'orderflow_cached_profile_v1';
+
+function readCachedProfile(): RestaurantProfile | null {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed.name === 'string' ? (parsed as RestaurantProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProfile(profile: RestaurantProfile | null) {
+  try {
+    if (profile && profile.name) {
+      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [rawProfile, setRawProfile] = useState<RestaurantProfile | null>(null);
+  const [rawProfile, setRawProfile] = useState<RestaurantProfile | null>(() => readCachedProfile());
   const [profileExists, setProfileExists] = useState(false);
   const [profileLoading, setProfileLoading] = useState(true);
   const [rawCategories, setRawCategories] = useState<MenuCategory[]>([]);
@@ -59,7 +83,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       doc(db, 'restaurant', 'profile'),
       (snap) => {
         setProfileExists(snap.exists());
-        setRawProfile(snap.exists() ? (snap.data() as RestaurantProfile) : null);
+        const next = snap.exists() ? (snap.data() as RestaurantProfile) : null;
+        setRawProfile(next);
+        if (next) writeCachedProfile(next);
         setProfileLoading(false);
       },
       (err) => {
@@ -102,8 +128,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [rawProfile, profileLoading]);
 
   const usingDefaultCatalog = useMemo(
-    () => categoriesLoaded && itemsLoaded && rawCategories.length === 0 && rawItems.length === 0,
-    [categoriesLoaded, itemsLoaded, rawCategories.length, rawItems.length],
+    () =>
+      categoriesLoaded &&
+      itemsLoaded &&
+      rawCategories.length === 0 &&
+      rawItems.length === 0 &&
+      !rawProfile?.starterMenuCleared,
+    [categoriesLoaded, itemsLoaded, rawCategories.length, rawItems.length, rawProfile?.starterMenuCleared],
   );
 
   const categories = useMemo(
@@ -122,6 +153,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .then((cfg) => {
         setServerCard(!!cfg.cardPayments);
         setServerReachable(true);
+        if (cfg.profile?.name) {
+          setRawProfile((prev) => prev || cfg.profile || null);
+          writeCachedProfile(cfg.profile);
+          setProfileLoading(false);
+        }
       })
       .catch(() => setServerReachable(false));
   }, []);
@@ -169,8 +205,33 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const { id, rating: _r, ratingCount: _rc, soldCount: _sc, ...data } = item;
       batch.set(doc(db, 'items', id), data);
     }
+    const baseProfile = rawProfile || DEFAULT_RESTAURANT_PROFILE;
+    const { averageRating: _ar, totalRatings: _tr, ...safeProfile } = baseProfile;
+    batch.set(
+      doc(db, 'restaurant', 'profile'),
+      { ...safeProfile, name: safeProfile.name || 'Restaurant', isAcceptingOrders: safeProfile.isAcceptingOrders ?? true, starterMenuCleared: true },
+      { merge: true },
+    );
     await batch.commit();
-  }, [usingDefaultCatalog, categories, items]);
+  }, [usingDefaultCatalog, categories, items, rawProfile]);
+
+  const clearMenuCatalog = useCallback(async () => {
+    const batch = writeBatch(db);
+    for (const c of rawCategories) {
+      batch.delete(doc(db, 'categories', c.id));
+    }
+    for (const item of rawItems) {
+      batch.delete(doc(db, 'items', item.id));
+    }
+    const baseProfile = rawProfile || DEFAULT_RESTAURANT_PROFILE;
+    const { averageRating: _ar, totalRatings: _tr, ...safeProfile } = baseProfile;
+    batch.set(
+      doc(db, 'restaurant', 'profile'),
+      { ...safeProfile, name: safeProfile.name || 'Restaurant', isAcceptingOrders: safeProfile.isAcceptingOrders ?? true, starterMenuCleared: true },
+      { merge: true },
+    );
+    await batch.commit();
+  }, [rawCategories, rawItems, rawProfile]);
 
   const catalog = useMemo<Catalog>(() => {
     const activeCategoryIds = new Set(categories.filter((c) => c.active !== false).map((c) => c.id));
@@ -186,6 +247,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       items,
       usingDefaultCatalog,
       ensureCatalogPersisted,
+      clearMenuCatalog,
       menuLoading: !categoriesLoaded || !itemsLoaded,
       catalog,
       status,
@@ -202,6 +264,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       items,
       usingDefaultCatalog,
       ensureCatalogPersisted,
+      clearMenuCatalog,
       categoriesLoaded,
       itemsLoaded,
       catalog,

@@ -1,14 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { arrayRemove, arrayUnion, collection, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { deleteApp, getApps, initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth';
 import toast from 'react-hot-toast';
-import { Search, UserPlus, X } from 'lucide-react';
+import { Search, Trash2, UserPlus, X } from 'lucide-react';
 import { db } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 import type { PromoCode, UserProfile, UserRole } from '../types';
-import { useAuth } from '../context/AuthContext';
-import { authErrorMessage } from '../context/AuthContext';
+import { useAuth, authErrorMessage, BOOTSTRAP_ADMIN_EMAILS, emailInviteDocId } from '../context/AuthContext';
 import { ConfirmDialog, Field, PageSpinner, Sheet, Spinner, adminInput } from '../components/ui';
 import { formatMoney } from '../lib/money';
 import { friendlyError, reportError } from '../utils/errorHandling';
@@ -58,7 +57,18 @@ export const AdminUsers: React.FC = () => {
     const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snap) => {
-        setUsers(snap.docs.map((d) => d.data() as UserProfile));
+        setUsers(
+          snap.docs.map((d) => {
+            const data = d.data() as UserProfile;
+            if (BOOTSTRAP_ADMIN_EMAILS.has((data.email || '').toLowerCase()) && data.role !== 'admin') {
+              if (role === 'admin') {
+                updateDoc(doc(db, 'users', d.id), { role: 'admin' }).catch(() => undefined);
+              }
+              return { ...data, role: 'admin' as const };
+            }
+            return data;
+          }),
+        );
         setLoading(false);
       },
       (err) => {
@@ -75,7 +85,7 @@ export const AdminUsers: React.FC = () => {
       unsubUsers();
       unsubPromos();
     };
-  }, []);
+  }, [role]);
 
   const grantable = assignableRoles(role);
 
@@ -115,30 +125,85 @@ export const AdminUsers: React.FC = () => {
 
   const createUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    const email = newUser.email.trim().toLowerCase();
+    const name = newUser.name.trim().slice(0, 100);
+    const password = newUser.password;
+    if (!email || !name) return;
+
     setBusy(true);
-    // A secondary Firebase app creates the account without signing the manager out.
-    const app = getApps().find((a) => a.name === 'SecondaryApp') || initializeApp(firebaseConfig, 'SecondaryApp');
-    const secondaryAuth = getAuth(app);
     try {
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, newUser.email.trim(), newUser.password);
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        uid: cred.user.uid,
-        email: newUser.email.trim(),
-        name: newUser.name.trim().slice(0, 100),
+      // 1. If a user with this email already exists in `users`, update their role directly.
+      const existing = users.find((u) => (u.email || '').trim().toLowerCase() === email);
+      if (existing) {
+        await updateDoc(doc(db, 'users', existing.uid), {
+          role: newUser.role,
+          ...(name && !existing.name ? { name } : {}),
+        });
+        toast.success(`${name || email} is now ${ROLE_LABEL[newUser.role]}`);
+        setCreating(false);
+        setNewUser({ email: '', password: '', name: '', role: 'staff' });
+        return;
+      }
+
+      // 2. If a password was entered, attempt to create a Firebase Email/Password account.
+      //    If no password was entered OR if Email/Password sign-in is not enabled in Firebase
+      //    Console (auth/operation-not-allowed), pre-authorize their email in Firestore so
+      //    their role activates automatically when they sign in with Google.
+      let createdUid: string | null = null;
+      if (password.trim().length >= 6) {
+        const app = getApps().find((a) => a.name === 'SecondaryApp') || initializeApp(firebaseConfig, 'SecondaryApp');
+        const secondaryAuth = getAuth(app);
+        try {
+          const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+          createdUid = cred.user.uid;
+        } catch (authErr) {
+          const code = (authErr as { code?: string })?.code || '';
+          if (code !== 'auth/operation-not-allowed' && code !== 'auth/email-already-in-use') {
+            throw authErr;
+          }
+        } finally {
+          await signOut(secondaryAuth).catch(() => undefined);
+          await deleteApp(app).catch(() => undefined);
+        }
+      }
+
+      const targetDocId = createdUid || emailInviteDocId(email);
+      await setDoc(doc(db, 'users', targetDocId), {
+        uid: targetDocId,
+        email,
+        name,
         role: newUser.role,
         totalOrders: 0,
         totalSpent: 0,
         createdAt: serverTimestamp(),
       });
-      toast.success(`Account created for ${newUser.email.trim()}`);
+
+      toast.success(
+        createdUid
+          ? `Account created for ${email} (${ROLE_LABEL[newUser.role]})`
+          : `Added ${email} as ${ROLE_LABEL[newUser.role]}. They can sign in with Google using this email.`,
+        { duration: 5000 },
+      );
       setCreating(false);
       setNewUser({ email: '', password: '', name: '', role: 'staff' });
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
       toast.error(code.startsWith('auth/') ? authErrorMessage(err) : friendlyError(err));
     } finally {
-      await signOut(secondaryAuth).catch(() => undefined);
-      await deleteApp(app).catch(() => undefined);
+      setBusy(false);
+    }
+  };
+
+  const removePendingInvite = async (u: UserProfile) => {
+    if (!u.uid.startsWith('invite_')) return;
+    setBusy(true);
+    try {
+      await deleteDoc(doc(db, 'users', u.uid));
+      toast.success(`Removed pending invite for ${u.email}`);
+      setSelected(null);
+    } catch (err) {
+      toast.error(friendlyError(err));
+    } finally {
       setBusy(false);
     }
   };
@@ -151,27 +216,27 @@ export const AdminUsers: React.FC = () => {
     <div className="space-y-4 sm:space-y-5">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">People</h1>
-          <p className="text-xs sm:text-sm text-gray-500 tabular-nums mt-0.5">
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">People</h1>
+          <p className="text-xs sm:text-sm text-muted tabular-nums mt-0.5">
             {users.length - team} customers · {team} team members
           </p>
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="min-h-[42px] px-4 py-2 rounded-xl bg-gray-900 hover:bg-black text-white font-semibold text-sm flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          className="min-h-[42px] px-4 py-2 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm shadow-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 transition"
         >
           <UserPlus size={16} /> Add team member
         </button>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
-        <div className="flex items-center gap-1 p-1 bg-gray-200/60 rounded-xl self-start">
+        <div className="flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl self-start">
           {(['all', 'team', 'customers'] as Filter[]).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`min-h-[34px] px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold capitalize transition whitespace-nowrap ${
-                filter === f ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+              className={`min-h-[34px] px-3.5 py-1.5 rounded-btn text-xs sm:text-sm font-bold capitalize transition whitespace-nowrap ${
+                filter === f ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
               }`}
             >
               {f}
@@ -179,35 +244,38 @@ export const AdminUsers: React.FC = () => {
           ))}
         </div>
         <div className="relative sm:ml-auto sm:w-72">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email, phone…" className={`${adminInput} pl-9`} />
         </div>
       </div>
 
-      <ul className="bg-white rounded-2xl border border-gray-200/80 divide-y divide-gray-100 overflow-hidden">
+      <ul className="bg-white rounded-card border border-line shadow-ios-sm divide-y divide-line overflow-hidden">
         {visible.map((u) => (
           <li key={u.uid}>
-            <button onClick={() => setSelected(u)} className="w-full min-h-[60px] flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition">
-              <span className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200/60 flex items-center justify-center font-bold text-sm text-gray-700 shrink-0">
+            <button onClick={() => setSelected(u)} className="w-full min-h-[60px] flex items-center gap-3 px-4 py-3 text-left hover:bg-soft/70 transition">
+              <span className="w-10 h-10 rounded-full bg-accent border border-brand/20 flex items-center justify-center font-display font-extrabold text-sm text-brand shrink-0">
                 {(u.name || u.email).charAt(0).toUpperCase()}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
-                  <span className="font-semibold text-sm sm:text-base text-gray-900 truncate">{u.name || u.email}</span>
+                  <span className="font-semibold text-sm sm:text-base text-ink truncate">{u.name || u.email}</span>
                   <span className={`shrink-0 px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase ${ROLE_STYLE[u.role]}`}>{ROLE_LABEL[u.role]}</span>
+                  {u.uid.startsWith('invite_') && (
+                    <span className="shrink-0 text-[11px] font-medium text-muted">· Invited</span>
+                  )}
                 </span>
-                <span className="block text-xs text-gray-500 truncate mt-0.5">{u.email}</span>
+                <span className="block text-xs text-muted truncate mt-0.5">{u.email}</span>
               </span>
               {u.role === 'customer' && (
-                <span className="text-right text-xs text-gray-500 shrink-0 tabular-nums">
-                  <span className="block font-bold font-mono text-gray-900">{formatMoney(u.totalSpent || 0)}</span>
+                <span className="text-right text-xs text-muted shrink-0 tabular-nums">
+                  <span className="block font-display font-bold text-ink">{formatMoney(u.totalSpent || 0)}</span>
                   <span>{u.totalOrders || 0} orders</span>
                 </span>
               )}
             </button>
           </li>
         ))}
-        {visible.length === 0 && <li className="p-8 text-center text-sm text-gray-500">No one matches that search.</li>}
+        {visible.length === 0 && <li className="p-8 text-center text-sm text-muted">No one matches that search.</li>}
       </ul>
 
       <Sheet open={!!current} onClose={() => setSelected(null)} surface="admin" size="sm" title={current?.name || current?.email}>
@@ -279,9 +347,22 @@ export const AdminUsers: React.FC = () => {
                       </option>
                     ))}
                 </select>
-                <p className="text-xs text-gray-500">Once a code is assigned to someone, only assigned customers can use it. It appears in their account under “Your offers”.</p>
+              <p className="text-xs text-gray-500">Once a code is assigned to someone, only assigned customers can use it. It appears in their account under “Your offers”.</p>
               </div>
             </div>
+
+            {current.uid.startsWith('invite_') && (
+              <div className="pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => removePendingInvite(current)}
+                  className="w-full py-2.5 px-4 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                >
+                  <Trash2 size={14} /> Remove pending invite
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Sheet>
@@ -293,20 +374,17 @@ export const AdminUsers: React.FC = () => {
         size="sm"
         title="Add team member"
         footer={
-          <button form="new-user" type="submit" disabled={busy} className="w-full py-3 rounded-2xl bg-gray-900 text-white font-semibold flex items-center justify-center gap-2">
-            {busy && <Spinner size={16} />} Create account
+          <button form="new-user" type="submit" disabled={busy} className="w-full py-3 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold flex items-center justify-center gap-2">
+            {busy && <Spinner size={16} />} Add team member
           </button>
         }
       >
         <form id="new-user" onSubmit={createUser} className="p-5 space-y-4">
           <Field label="Name">
-            <input value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} className={adminInput} required />
+            <input value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} placeholder="Full name" className={adminInput} required />
           </Field>
-          <Field label="Email">
-            <input type="email" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} className={adminInput} required />
-          </Field>
-          <Field label="Temporary password" hint="At least 6 characters. Ask them to change it with “Forgot password”.">
-            <input type="password" minLength={6} value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} className={adminInput} required />
+          <Field label="Email" hint="They can sign in with Google using this email address to access their role immediately.">
+            <input type="email" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} placeholder="team@example.com" className={adminInput} required />
           </Field>
           <Field label="Role">
             <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value as UserRole })} className={adminInput}>
@@ -318,6 +396,19 @@ export const AdminUsers: React.FC = () => {
                   </option>
                 ))}
             </select>
+          </Field>
+          <Field
+            label="Temporary password (optional)"
+            hint="Leave blank if they sign in with Google. Only used when Email/Password sign-in is enabled in Firebase Authentication."
+          >
+            <input
+              type="password"
+              minLength={6}
+              value={newUser.password}
+              onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+              placeholder="Optional (Google sign-in works without a password)"
+              className={adminInput}
+            />
           </Field>
         </form>
       </Sheet>

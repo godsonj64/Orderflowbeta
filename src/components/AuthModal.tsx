@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowLeft, Eye, EyeOff, Mail } from 'lucide-react';
+import { auth } from '../firebase';
 import { authErrorMessage, useAuth } from '../context/AuthContext';
 import { Sheet, Spinner } from './ui';
 
@@ -67,6 +69,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setError('');
     try {
       await signInWithGoogle();
+      if (auth.currentUser) onClose();
     } catch (err) {
       setError(authErrorMessage(err));
     }
@@ -247,7 +250,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         {mode === 'signup' && (
           <p className="text-center text-[11px] text-muted leading-relaxed pt-1">
             By clicking Register, you agree to our{' '}
-            <span className="font-bold text-brand">Terms and Data Policy</span>.
+            <Link to="/terms-of-service" onClick={onClose} className="font-bold text-brand hover:underline">
+              Terms
+            </Link>{' '}
+            and{' '}
+            <Link to="/privacy-policy" onClick={onClose} className="font-bold text-brand hover:underline">
+              Data Policy
+            </Link>
+            .
           </p>
         )}
       </div>

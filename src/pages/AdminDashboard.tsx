@@ -70,17 +70,17 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           : 'text-gray-500';
 
   return (
-    <article className="bg-white rounded-2xl border border-gray-200/80 p-4 sm:p-5 flex flex-col gap-3.5">
+    <article className="bg-white rounded-card border border-line shadow-ios-sm p-4 sm:p-5 flex flex-col gap-3.5">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-extrabold text-lg font-mono tabular-nums tracking-tight">#{orderCode(order)}</h3>
+            <h3 className="font-extrabold text-lg font-mono tabular-nums tracking-tight text-ink">#{orderCode(order)}</h3>
             <span className={`px-2 py-0.5 rounded-md border text-[11px] font-bold uppercase tracking-wide ${STATUS_STYLE[order.status]}`}>
               {STATUS_LABEL[order.status]}
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-gray-500 mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-            <span className="font-semibold text-gray-900">{order.customerName || 'Guest'}</span>
+          <p className="text-xs sm:text-sm text-muted mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span className="font-semibold text-ink">{order.customerName || 'Guest'}</span>
             <span aria-hidden="true">·</span>
             <span>{order.type === 'delivery' ? 'Delivery' : 'Pickup'}</span>
             <span aria-hidden="true">·</span>
@@ -88,26 +88,26 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           </p>
         </div>
         <div className="text-right shrink-0">
-          <p className="font-extrabold text-lg font-mono tabular-nums">{formatMoney(order.total)}</p>
+          <p className="font-display font-extrabold text-lg tabular-nums text-ink">{formatMoney(order.total)}</p>
           <p className={`text-xs ${payTextCls}`}>{pay.label}</p>
           {!!order.refundAmount && <p className="text-[11px] font-mono text-red-600 tabular-nums">−{formatMoney(order.refundAmount)} refunded</p>}
         </div>
       </header>
 
       {scheduled && (
-        <div className="text-xs sm:text-sm font-semibold text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
+        <div className="text-xs sm:text-sm font-semibold text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-btn px-3 py-2">
           Scheduled for {scheduled}
         </div>
       )}
 
       {(order.customerPhone || (order.type === 'delivery' && order.deliveryAddress) || order.driverName) && (
-        <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-gray-600">
+        <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-muted">
           {order.customerPhone && (
             <a
               href={`tel:${order.customerPhone}`}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium transition"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-soft hover:bg-gray-200/70 text-ink font-medium transition"
             >
-              <Phone size={13} />
+              <Phone size={13} className="text-brand" />
               <span className="tabular-nums">{order.customerPhone}</span>
             </a>
           )}
@@ -116,28 +116,28 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.deliveryAddress)}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium transition max-w-full"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-soft hover:bg-gray-200/70 text-ink font-medium transition max-w-full"
             >
-              <MapPin size={13} className="shrink-0" />
+              <MapPin size={13} className="shrink-0 text-brand" />
               <span className="truncate">{order.deliveryAddress}</span>
             </a>
           )}
-          {order.driverName && <span className="text-xs text-gray-500">Driver: {order.driverName}</span>}
+          {order.driverName && <span className="text-xs text-muted">Driver: {order.driverName}</span>}
         </div>
       )}
 
-      <ul className="bg-gray-50/80 border border-gray-100 rounded-xl p-3 space-y-2">
+      <ul className="bg-soft/70 border border-line rounded-btn p-3 space-y-2">
         {order.items.map((item, i) => (
           <li key={i} className="text-sm">
             <div className="flex justify-between gap-3">
-              <span className="font-semibold text-gray-900">
-                <span className="font-mono tabular-nums text-gray-500 mr-1.5">{item.quantity}×</span>
+              <span className="font-semibold text-ink">
+                <span className="font-mono tabular-nums text-brand font-bold mr-1.5">{item.quantity}×</span>
                 {item.name}
               </span>
-              <span className="text-gray-500 font-mono tabular-nums text-xs sm:text-sm shrink-0">{formatMoney(item.price * item.quantity)}</span>
+              <span className="text-muted font-mono tabular-nums text-xs sm:text-sm shrink-0">{formatMoney(item.price * item.quantity)}</span>
             </div>
             {item.selectedModifiers?.length > 0 && (
-              <p className="text-xs text-gray-500 pl-6 mt-0.5">{groupModifiers(item.selectedModifiers)}</p>
+              <p className="text-xs text-muted pl-6 mt-0.5">{groupModifiers(item.selectedModifiers)}</p>
             )}
             {item.prepNotes && <p className="text-xs font-semibold text-red-700 pl-6 mt-0.5">Note: “{item.prepNotes}”</p>}
           </li>
@@ -145,13 +145,13 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
       </ul>
 
       {order.notes && (
-        <p className="text-xs sm:text-sm bg-red-50 border border-red-200 text-red-900 rounded-xl px-3 py-2 font-medium">
+        <p className="text-xs sm:text-sm bg-red-50 border border-red-200 text-red-900 rounded-btn px-3 py-2 font-medium">
           Order note: {order.notes}
         </p>
       )}
 
       {order.cancelReason && order.status === 'cancelled' && (
-        <p className="text-xs text-gray-500">Cancelled by {order.cancelledBy || 'staff'}: {order.cancelReason}</p>
+        <p className="text-xs text-muted">Cancelled by {order.cancelledBy || 'staff'}: {order.cancelReason}</p>
       )}
       {order.paymentCollectedBy && order.paymentStatus === 'paid' && order.paymentMethod === 'cash' && (
         <p className="text-xs text-emerald-700">
@@ -164,7 +164,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
         {step && order.status !== 'payment_pending' && (
           <button
             onClick={() => onAdvance(order)}
-            className="w-full min-h-[44px] bg-gray-900 hover:bg-black text-white rounded-xl px-4 py-2.5 text-sm font-bold transition active:scale-[0.99]"
+            className="w-full min-h-[44px] bg-brand hover:opacity-95 text-on-brand rounded-btn px-4 py-2.5 text-sm font-bold shadow-xs transition active:scale-[0.99]"
           >
             {step.status === 'completed' && cashDue ? `Collect ${formatMoney(order.total)} & complete` : step.label}
           </button>
@@ -410,13 +410,13 @@ export const AdminDashboard: React.FC = () => {
       {/* Top-level view toggle for managers so financial charts don't clutter the live orders feed on mobile */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="grid grid-cols-3 gap-2 sm:gap-3 flex-1">
-          <div className="bg-white rounded-2xl border border-gray-200/80 px-3 py-2.5 sm:p-4">
-            <p className="text-[11px] font-medium text-gray-500 truncate">Orders today</p>
-            <p className="text-lg sm:text-2xl font-extrabold font-mono tabular-nums mt-0.5">{today.count}</p>
+          <div className="bg-white rounded-card border border-line shadow-ios-sm px-3 py-2.5 sm:p-4">
+            <p className="text-[11px] font-medium text-muted truncate">Orders today</p>
+            <p className="text-lg sm:text-2xl font-display font-extrabold tabular-nums mt-0.5 text-ink">{today.count}</p>
           </div>
-          <div className="bg-white rounded-2xl border border-gray-200/80 px-3 py-2.5 sm:p-4">
-            <p className="text-[11px] font-medium text-gray-500 truncate">Sales today</p>
-            <p className="text-lg sm:text-2xl font-extrabold font-mono tabular-nums mt-0.5">{formatMoney(today.sales)}</p>
+          <div className="bg-white rounded-card border border-line shadow-ios-sm px-3 py-2.5 sm:p-4">
+            <p className="text-[11px] font-medium text-muted truncate">Sales today</p>
+            <p className="text-lg sm:text-2xl font-display font-extrabold tabular-nums mt-0.5 text-brand">{formatMoney(today.sales)}</p>
           </div>
           <button
             type="button"
@@ -424,24 +424,24 @@ export const AdminDashboard: React.FC = () => {
               setViewMode('orders');
               setFilter('unpaid');
             }}
-            className={`text-left rounded-2xl border px-3 py-2.5 sm:p-4 transition ${
-              today.cashOutstanding > 0 ? 'bg-amber-50 border-amber-200 hover:bg-amber-100/70' : 'bg-white border-gray-200/80 hover:bg-gray-50'
+            className={`text-left rounded-card border shadow-ios-sm px-3 py-2.5 sm:p-4 transition ${
+              today.cashOutstanding > 0 ? 'bg-amber-50 border-amber-200 hover:bg-amber-100/70' : 'bg-white border-line hover:bg-soft'
             }`}
           >
-            <p className={`text-[11px] font-medium truncate ${today.cashOutstanding > 0 ? 'text-amber-800' : 'text-gray-500'}`}>Cash due</p>
-            <p className={`text-lg sm:text-2xl font-extrabold font-mono tabular-nums mt-0.5 ${today.cashOutstanding > 0 ? 'text-amber-900' : 'text-gray-900'}`}>
+            <p className={`text-[11px] font-medium truncate ${today.cashOutstanding > 0 ? 'text-amber-800' : 'text-muted'}`}>Cash due</p>
+            <p className={`text-lg sm:text-2xl font-display font-extrabold tabular-nums mt-0.5 ${today.cashOutstanding > 0 ? 'text-amber-900' : 'text-ink'}`}>
               {formatMoney(today.cashOutstanding)}
             </p>
           </button>
         </div>
 
         {isManager && (
-          <div className="flex items-center p-1 bg-gray-200/70 rounded-xl self-start sm:self-stretch shrink-0">
+          <div className="flex items-center p-1 bg-white border border-line shadow-2xs rounded-2xl self-start sm:self-stretch shrink-0">
             <button
               type="button"
               onClick={() => setViewMode('orders')}
-              className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition whitespace-nowrap ${
-                viewMode === 'orders' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+              className={`flex-1 sm:flex-initial px-4 py-2 rounded-btn text-xs sm:text-sm font-bold transition whitespace-nowrap ${
+                viewMode === 'orders' ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
               }`}
             >
               Live orders ({counts.active})
@@ -449,8 +449,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => setViewMode('insights')}
-              className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition whitespace-nowrap ${
-                viewMode === 'insights' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+              className={`flex-1 sm:flex-initial px-4 py-2 rounded-btn text-xs sm:text-sm font-bold transition whitespace-nowrap ${
+                viewMode === 'insights' ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
               }`}
             >
               Sales & insights
@@ -462,7 +462,7 @@ export const AdminDashboard: React.FC = () => {
       {viewMode === 'insights' && isManager ? (
         <Suspense
           fallback={
-            <div className="flex justify-center py-12 text-gray-400">
+            <div className="flex justify-center py-12 text-muted">
               <Spinner />
             </div>
           }
@@ -472,22 +472,22 @@ export const AdminDashboard: React.FC = () => {
       ) : (
         <>
           <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
-            <div className="flex items-center gap-0.5 sm:gap-1 p-1 bg-gray-200/60 rounded-xl overflow-x-auto hide-scrollbar">
+            <div className="flex items-center gap-0.5 sm:gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl overflow-x-auto hide-scrollbar">
               {filters.map((f) => (
                 <button
                   key={f.id}
                   onClick={() => setFilter(f.id)}
-                  className={`flex-1 sm:flex-initial shrink-0 min-h-[36px] px-2 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-sm font-semibold transition whitespace-nowrap text-center ${
-                    filter === f.id ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                  className={`flex-1 sm:flex-initial shrink-0 min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-btn text-[11px] sm:text-sm font-bold transition whitespace-nowrap text-center ${
+                    filter === f.id ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
                   }`}
                 >
                   {f.label}
-                  {f.count !== undefined && <span className="ml-1 font-mono tabular-nums opacity-65">{f.count}</span>}
+                  {f.count !== undefined && <span className="ml-1 font-mono tabular-nums opacity-75">{f.count}</span>}
                 </button>
               ))}
             </div>
             <div className="relative sm:ml-auto sm:w-72">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -498,7 +498,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
 
           {visible.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-10 text-center text-gray-500 text-sm">
+            <div className="bg-white rounded-card border border-dashed border-line p-10 text-center text-muted text-sm">
               {filter === 'active' ? 'No active orders right now. New orders will appear here automatically.' : 'No orders match this filter.'}
             </div>
           ) : (

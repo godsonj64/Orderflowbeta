@@ -70,11 +70,11 @@ function normalize(profile: RestaurantProfile | null): RestaurantProfile {
 
 function Card({ title, description, children }: { title?: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="bg-white rounded-2xl border border-gray-200/80 p-4 sm:p-5 space-y-4">
+    <section className="bg-white rounded-card border border-line shadow-ios-sm p-4 sm:p-5 space-y-4">
       {title && (
         <div>
-          <h3 className="font-bold text-gray-900">{title}</h3>
-          {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
+          <h3 className="font-display font-extrabold text-ink">{title}</h3>
+          {description && <p className="text-xs text-muted mt-0.5">{description}</p>}
         </div>
       )}
       {children}
@@ -113,18 +113,18 @@ function DayRow({ day, hours, onChange }: { day: string; hours: DayHours; onChan
   return (
     <div className="py-3 space-y-2.5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <label className="flex items-center gap-2.5 min-h-[36px] sm:w-36 shrink-0 font-semibold text-sm text-gray-900 cursor-pointer">
+        <label className="flex items-center gap-2.5 min-h-[36px] sm:w-36 shrink-0 font-semibold text-sm text-ink cursor-pointer">
           <input
             type="checkbox"
             checked={!hours.closed}
             onChange={(e) => onChange({ ...hours, closed: !e.target.checked })}
-            className="w-4 h-4 rounded accent-[#287350]"
+            className="w-4 h-4 rounded accent-brand"
           />
           {day}
-          {hours.closed && <span className="ml-auto sm:hidden text-xs font-normal text-gray-400">Closed</span>}
+          {hours.closed && <span className="ml-auto sm:hidden text-xs font-normal text-muted">Closed</span>}
         </label>
         {hours.closed ? (
-          <span className="hidden sm:inline text-sm text-gray-400">Closed</span>
+          <span className="hidden sm:inline text-sm text-muted">Closed</span>
         ) : (
           <div className="grid grid-cols-[1fr_auto_1fr] sm:flex items-center gap-2 flex-1 sm:justify-end">
             <input
@@ -134,7 +134,7 @@ function DayRow({ day, hours, onChange }: { day: string; hours: DayHours; onChan
               className={`${adminInput} sm:w-[132px] font-mono tabular-nums`}
               aria-label={`${day} opens`}
             />
-            <span className="text-gray-400 text-center">–</span>
+            <span className="text-muted text-center">–</span>
             <input
               type="time"
               value={hours.close}
@@ -147,12 +147,12 @@ function DayRow({ day, hours, onChange }: { day: string; hours: DayHours; onChan
       </div>
       {!hours.closed && (
         <div className="pl-0 sm:pl-36 space-y-2">
-          <label className="inline-flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+          <label className="inline-flex items-center gap-2 text-xs text-muted cursor-pointer">
             <input
               type="checkbox"
               checked={!!hours.hasSecondSlot}
               onChange={(e) => onChange({ ...hours, hasSecondSlot: e.target.checked, open2: hours.open2 || '17:00', close2: hours.close2 || '21:00' })}
-              className="w-4 h-4 rounded accent-[#287350]"
+              className="w-4 h-4 rounded accent-brand"
             />
             Split shift (e.g. lunch & dinner)
           </label>
@@ -320,25 +320,25 @@ export const AdminSettings: React.FC = () => {
     <div className={`space-y-4 ${dirty ? 'pb-28' : ''}`}>
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Settings</h1>
-          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Changes go live for customers as soon as you save.</p>
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">Settings</h1>
+          <p className="text-xs sm:text-sm text-muted mt-0.5">Changes go live for customers as soon as you save.</p>
         </div>
         <button
           onClick={() => setPreviewOpen(true)}
-          className="lg:hidden min-h-[40px] px-3.5 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 text-xs sm:text-sm font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          className="lg:hidden min-h-[40px] px-3.5 py-2 rounded-btn bg-white border border-line hover:bg-soft text-xs sm:text-sm font-bold text-ink flex items-center gap-1.5 shadow-2xs whitespace-nowrap shrink-0 transition"
         >
-          <Eye size={15} /> Preview
+          <Eye size={15} className="text-brand" /> Preview
         </button>
       </div>
 
       {/* Segmented settings tabs */}
-      <div className="grid grid-cols-5 sm:inline-flex items-center gap-1 p-1 bg-gray-200/60 rounded-xl">
+      <div className="grid grid-cols-5 sm:inline-flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`min-h-[36px] px-1.5 sm:px-3.5 py-1.5 rounded-lg text-[11px] sm:text-sm font-semibold transition whitespace-nowrap text-center truncate ${
-              tab === t.id ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+            className={`min-h-[36px] px-1.5 sm:px-3.5 py-1.5 rounded-btn text-[11px] sm:text-sm font-bold transition whitespace-nowrap text-center truncate ${
+              tab === t.id ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
             }`}
           >
             {t.label}
@@ -440,7 +440,7 @@ export const AdminSettings: React.FC = () => {
                             { enableHighAccuracy: true, timeout: 10000 },
                           );
                         }}
-                        className="min-h-[42px] px-3 py-2 rounded-xl bg-gray-900 hover:bg-black text-white text-xs font-semibold flex items-center gap-1.5 transition"
+                        className="min-h-[42px] px-3 py-2 rounded-btn bg-brand hover:opacity-95 text-on-brand text-xs font-bold flex items-center gap-1.5 transition"
                       >
                         <LocateFixed size={14} /> Use current GPS
                       </button>
@@ -649,13 +649,13 @@ export const AdminSettings: React.FC = () => {
       </Sheet>
 
       {dirty && (
-        <div className="fixed inset-x-0 bottom-[calc(60px+env(safe-area-inset-bottom))] md:bottom-0 z-50 bg-white/95 backdrop-blur border-t border-gray-200 px-4 pt-3 pb-3 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="fixed inset-x-0 bottom-[calc(60px+env(safe-area-inset-bottom))] md:bottom-0 z-50 bg-white/95 backdrop-blur border-t border-line px-4 pt-3 pb-3 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="max-w-7xl mx-auto flex items-center gap-3">
-            <p className="text-sm font-semibold text-gray-700 hidden sm:block">You have unsaved changes</p>
-            <button onClick={discard} disabled={saving} className="ml-auto px-5 py-2.5 rounded-xl bg-gray-100 font-semibold text-sm">
+            <p className="text-sm font-semibold text-ink hidden sm:block">You have unsaved changes</p>
+            <button onClick={discard} disabled={saving} className="ml-auto px-5 py-2.5 rounded-btn bg-soft text-ink font-semibold text-sm">
               Discard
             </button>
-            <button onClick={save} disabled={saving || overBudget} className="px-6 py-2.5 rounded-xl bg-gray-900 text-white font-semibold text-sm flex items-center gap-2 disabled:opacity-50">
+            <button onClick={save} disabled={saving || overBudget} className="px-6 py-2.5 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm shadow-xs flex items-center gap-2 disabled:opacity-50">
               {saving && <Spinner size={16} />} Save changes
             </button>
           </div>

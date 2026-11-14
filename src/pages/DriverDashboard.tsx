@@ -270,11 +270,11 @@ export const DriverDashboard: React.FC = () => {
     <div className="max-w-3xl mx-auto space-y-5">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Deliveries</h1>
-          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Accept a delivery, share live GPS, and confirm drop-off.</p>
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">Deliveries</h1>
+          <p className="text-xs sm:text-sm text-muted mt-0.5">Accept a delivery, share live GPS, and confirm drop-off.</p>
         </div>
         {cashToCollect > 0 && (
-          <div className="text-right rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 shrink-0">
+          <div className="text-right rounded-btn bg-amber-50 border border-amber-200 px-3 py-2 shrink-0">
             <p className="text-[11px] font-semibold text-amber-800">Cash to collect</p>
             <p className="font-extrabold font-mono tabular-nums text-amber-900">{formatMoney(cashToCollect)}</p>
           </div>
@@ -284,14 +284,14 @@ export const DriverDashboard: React.FC = () => {
       {/* Live GPS broadcaster strip whenever the driver has active deliveries */}
       {mine.length > 0 && (
         <div
-          className={`rounded-2xl border p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 transition ${
-            sharingGps ? 'bg-emerald-950 text-white border-emerald-800' : 'bg-white text-gray-900 border-gray-200/80'
+          className={`rounded-card border shadow-ios-sm p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 transition ${
+            sharingGps ? 'bg-brand text-on-brand border-brand' : 'bg-white text-ink border-line'
           }`}
         >
           <div className="flex items-center gap-3 min-w-0">
             <span
-              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                sharingGps ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-100 text-gray-600'
+              className={`w-9 h-9 rounded-btn flex items-center justify-center shrink-0 ${
+                sharingGps ? 'bg-white/20 text-on-brand' : 'bg-accent text-brand'
               }`}
             >
               <Radio size={18} className={sharingGps ? 'animate-pulse' : ''} />
@@ -300,7 +300,7 @@ export const DriverDashboard: React.FC = () => {
               <p className="text-sm font-bold flex items-center gap-2">
                 {sharingGps ? 'Live GPS sharing is ON' : 'Share your live GPS with customers'}
               </p>
-              <p className={`text-xs truncate ${sharingGps ? 'text-emerald-200/80' : 'text-gray-500'}`}>
+              <p className={`text-xs truncate ${sharingGps ? 'opacity-85' : 'text-muted'}`}>
                 {gpsError
                   ? gpsError
                   : driverPos
@@ -314,8 +314,8 @@ export const DriverDashboard: React.FC = () => {
             <button
               type="button"
               onClick={pingGpsNow}
-              className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
-                sharingGps ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+              className={`min-h-[38px] px-3 py-1.5 rounded-btn text-xs font-semibold flex items-center gap-1.5 transition ${
+                sharingGps ? 'bg-white/15 hover:bg-white/25 text-on-brand' : 'bg-soft hover:bg-gray-200/70 text-ink'
               }`}
             >
               <LocateFixed size={14} /> Ping now
@@ -323,8 +323,8 @@ export const DriverDashboard: React.FC = () => {
             <button
               type="button"
               onClick={sharingGps ? stopGpsSharing : startGpsSharing}
-              className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
-                sharingGps ? 'bg-red-500/90 hover:bg-red-500 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              className={`min-h-[38px] px-3.5 py-1.5 rounded-btn text-xs font-bold transition ${
+                sharingGps ? 'bg-red-500/90 hover:bg-red-500 text-white' : 'bg-brand hover:opacity-95 text-on-brand'
               }`}
             >
               {sharingGps ? 'Pause GPS' : 'Start live GPS'}
@@ -433,21 +433,21 @@ export const DriverDashboard: React.FC = () => {
       )}
 
       <section className="space-y-3">
-        <h2 className="font-bold text-sm uppercase tracking-wider text-gray-500">
+        <h2 className="font-bold text-sm uppercase tracking-wider text-muted">
           Available for pickup ({available.length})
         </h2>
         {available.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-gray-500 text-sm">
+          <div className="rounded-card border border-dashed border-line bg-white p-10 text-center text-muted text-sm">
             No deliveries waiting. New ones appear here automatically.
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 gap-3">
             {available.map((order) => (
-              <article key={order.id} className="bg-white rounded-2xl border border-gray-200/80 p-4 flex flex-col gap-3">
+              <article key={order.id} className="bg-white rounded-card border border-line shadow-ios-sm p-4 flex flex-col gap-3">
                 <header className="flex items-start justify-between gap-2">
                   <div>
-                    <h3 className="font-extrabold text-lg font-mono tabular-nums">#{orderCode(order)}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">
+                    <h3 className="font-extrabold text-lg font-mono tabular-nums text-ink">#{orderCode(order)}</h3>
+                    <p className="text-xs text-muted mt-0.5">
                       {order.customerName} · {timeAgo(order.createdAt)}
                     </p>
                   </div>
@@ -459,16 +459,16 @@ export const DriverDashboard: React.FC = () => {
                     {order.status === 'ready' ? 'Ready' : 'Cooking'}
                   </span>
                 </header>
-                <p className="text-sm text-gray-700 line-clamp-2">{order.deliveryAddress}</p>
+                <p className="text-sm text-ink line-clamp-2">{order.deliveryAddress}</p>
                 {isCashDue(order) && (
-                  <p className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-1.5 tabular-nums">
+                  <p className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200/70 rounded-btn px-3 py-1.5 tabular-nums">
                     Cash order · collect {formatMoney(order.total)}
                   </p>
                 )}
                 <button
                   onClick={() => accept(order)}
                   disabled={busyId === order.id}
-                  className="mt-auto w-full min-h-[44px] bg-gray-900 hover:bg-black text-white rounded-xl py-2.5 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition"
+                  className="mt-auto w-full min-h-[44px] bg-brand hover:opacity-95 text-on-brand rounded-btn py-2.5 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition"
                 >
                   {busyId === order.id && <Spinner size={16} />} Accept delivery
                 </button>
@@ -485,7 +485,7 @@ export const DriverDashboard: React.FC = () => {
         size="sm"
         title={`Complete #${completing ? orderCode(completing) : ''}`}
         footer={
-          <button onClick={complete} disabled={!!busyId} className="w-full bg-emerald-600 text-white rounded-2xl py-3.5 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+          <button onClick={complete} disabled={!!busyId} className="w-full bg-brand hover:opacity-95 text-on-brand rounded-btn py-3.5 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
             {busyId && <Spinner size={16} />} Confirm delivery
           </button>
         }

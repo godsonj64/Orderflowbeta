@@ -21,6 +21,7 @@ import { ANNOUNCEMENT_STYLES, SURFACES, themeStyle } from '../lib/theme';
 import { WEEK_DAYS, formatShift, hasHoursConfigured, zonedParts } from '../lib/hours';
 import { AuthModal } from './AuthModal';
 import { UserProfileDrawer } from './UserProfileDrawer';
+import { LoadingSplash } from './LoadingSplash';
 import Logo from './Logo';
 
 interface StorefrontUI {
@@ -88,19 +89,9 @@ function Header() {
   const { openAuth, openProfile } = useStorefrontUI();
   const location = useLocation();
   const navigate = useNavigate();
-  const name = profile?.name || 'Restaurant';
+  const name = profile?.name || '';
 
   const isHome = location.pathname === '/';
-  const isMenuView = isHome && location.hash === '#menu';
-  const mobileTitle = location.pathname.startsWith('/cart')
-    ? 'My Cart'
-    : location.pathname.startsWith('/my-orders')
-      ? 'My Orders'
-      : location.pathname.startsWith('/order/')
-        ? 'Location'
-        : isMenuView
-          ? 'Menu'
-          : 'Home';
 
   return (
     <header className="sticky top-0 z-40 bg-card/95 backdrop-blur-xl border-b border-line/70">
@@ -118,14 +109,14 @@ function Header() {
             </button>
           ) : null}
 
-          <Link to="/" className={`${!isHome ? 'hidden md:flex' : 'flex'} items-center gap-2.5 min-w-0`} aria-label={`${name} home`}>
-            {profileLoading ? (
+          <Link to="/" className={`${!isHome ? 'hidden md:flex' : 'flex'} items-center gap-2.5 min-w-0`} aria-label={name ? `${name} home` : 'Store home'}>
+            {profileLoading && !name ? (
               <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-soft animate-pulse shrink-0" />
             ) : profile?.logoUrl ? (
               <img src={profile.logoUrl} alt="" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover shrink-0 border border-line" />
             ) : (
               <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-brand text-on-brand flex items-center justify-center font-display font-bold text-sm shrink-0">
-                {name.charAt(0).toUpperCase()}
+                {(name || 'O').charAt(0).toUpperCase()}
               </span>
             )}
             <span className="hidden sm:flex min-w-0 flex-col">
@@ -135,9 +126,11 @@ function Header() {
           </Link>
         </div>
 
-        {/* Mobile centered page title (Kupa aesthetic) */}
-        <div className="md:hidden absolute inset-x-16 flex flex-col items-center justify-center pointer-events-none">
-          <span className="font-display font-extrabold text-base text-ink tracking-tight truncate">{mobileTitle}</span>
+        {/* Mobile centered restaurant name */}
+        <div className="md:hidden absolute inset-x-14 flex flex-col items-center justify-center pointer-events-none">
+          <span className="font-display font-extrabold text-lg text-ink tracking-tight truncate max-w-full">
+            {name}
+          </span>
         </div>
 
         {/* Right navigation controls */}
@@ -233,8 +226,65 @@ function SocialLinks() {
   );
 }
 
+/**
+ * Oversized footer brand wordmark that automatically scales its font size
+ * to fit the footer width cleanly without clipping or awkward wrapping.
+ */
+function AutoFitFooterBrand({ name }: { name: string }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const textRef = React.useRef<HTMLHeadingElement>(null);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const text = textRef.current;
+    if (!container || !text) return;
+
+    const fit = () => {
+      const availableWidth = container.clientWidth;
+      if (!availableWidth) return;
+      // Start at a bold display ceiling based on viewport width, then scale down if needed to fit on one line.
+      const maxPx = Math.min(128, Math.max(52, Math.floor(availableWidth * 0.22)));
+      const minPx = 28;
+      text.style.whiteSpace = 'nowrap';
+      text.style.fontSize = `${maxPx}px`;
+      const measured = text.scrollWidth;
+      if (measured > availableWidth && measured > 0) {
+        const scaled = Math.floor(maxPx * (availableWidth / measured) * 0.96);
+        if (scaled < minPx) {
+          text.style.fontSize = `${minPx}px`;
+          text.style.whiteSpace = 'normal';
+        } else {
+          text.style.fontSize = `${scaled}px`;
+        }
+      }
+    };
+
+    fit();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    ro?.observe(container);
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(fit).catch(() => undefined);
+    }
+    return () => ro?.disconnect();
+  }, [name]);
+
+  const approxVw = Math.min(20, Math.max(6, Math.floor(135 / Math.max(4, name.length))));
+
+  return (
+    <div ref={containerRef} className="w-full overflow-hidden text-center px-1">
+      <h2
+        ref={textRef}
+        style={{ fontSize: `clamp(3rem, ${approxVw}vw, 7.5rem)` }}
+        className="font-display font-extrabold tracking-tight leading-[0.95] text-ink inline-block max-w-full select-none"
+      >
+        {name}
+      </h2>
+    </div>
+  );
+}
+
 function Footer() {
-  const { profile, theme, status } = useStore();
+  const { profile, status } = useStore();
   if (!profile) return null;
   const today = WEEK_DAYS[(zonedParts(new Date(), status.timeZone).weekday + 6) % 7];
   const mapsUrl =
@@ -247,9 +297,9 @@ function Footer() {
   return (
     <footer className="bg-card border-t border-line mt-10 pb-28 md:pb-0">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-8">
-        <div className="text-center space-y-2">
-          <h2 className="font-display text-xl sm:text-2xl font-extrabold">{profile.name}</h2>
-          {profile.description && <p className="text-sm text-muted max-w-xl mx-auto">{profile.description}</p>}
+        <div className="text-center space-y-3">
+          <AutoFitFooterBrand name={profile.name} />
+          {profile.description && <p className="text-sm sm:text-base text-muted max-w-xl mx-auto leading-relaxed">{profile.description}</p>}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -434,6 +484,7 @@ export const Layout: React.FC = () => {
 
   return (
     <StorefrontUIContext.Provider value={ui}>
+      <LoadingSplash waitForMenu />
       <div className="min-h-[100dvh] bg-page text-ink font-sans flex flex-col">
         <AnnouncementBar />
         <Header />

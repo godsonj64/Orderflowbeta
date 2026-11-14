@@ -126,12 +126,12 @@ const Ticket = React.memo(function Ticket({
         <div className="p-3.5 pt-0">
           <button
             onClick={() => onAction(order)}
-            className={`w-full min-h-[44px] py-3 rounded-xl font-extrabold text-xs sm:text-sm uppercase tracking-wider transition active:scale-[0.98] ${
+            className={`w-full min-h-[44px] py-3 rounded-btn font-extrabold text-xs sm:text-sm uppercase tracking-wider transition active:scale-[0.98] ${
               order.status === 'new'
                 ? 'bg-sky-500 hover:bg-sky-600 text-white'
                 : order.status === 'ready'
                   ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                  : 'bg-[#EADDC5] hover:bg-[#D8CBB8] text-[#151B15]'
+                  : 'bg-brand hover:opacity-95 text-on-brand'
             }`}
           >
             {step.status === 'completed' && cashDue ? `Collect ${formatMoney(order.total)} & done` : waitingForDriver && order.driverName ? `Hand to ${order.driverName}` : step.label}
@@ -246,16 +246,16 @@ export const KitchenDashboard: React.FC = () => {
   const soldOutCount = items.filter((i) => i.active && i.isSoldOut).length;
 
   return (
-    <div className="bg-[#151B15] text-[#FAF6F0] min-h-[calc(100dvh-56px)] p-3 sm:p-5 lg:p-6 space-y-3.5">
+    <div className="bg-[#121814] text-[#FAF6F0] min-h-[calc(100dvh-56px)] p-3 sm:p-5 lg:p-6 space-y-3.5">
       <div className="flex flex-wrap items-center gap-2 justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Kitchen display</h1>
+          <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight">Kitchen display</h1>
           <p className="text-xs sm:text-sm text-[#9EB09E] tabular-nums">{orders.length} open tickets · target {prep} min</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setStockOpen(true)}
-            className="min-h-[40px] flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#232D23] hover:bg-[#374437] transition whitespace-nowrap"
+            className="min-h-[40px] flex items-center gap-1.5 rounded-btn px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#1D261F] hover:bg-[#2A362D] border border-white/10 transition whitespace-nowrap"
           >
             <span>86 / Sold out</span>
             {soldOutCount > 0 && <span className="bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[11px] font-mono tabular-nums">{soldOutCount}</span>}
@@ -263,8 +263,8 @@ export const KitchenDashboard: React.FC = () => {
           {wake.supported && (
             <button
               onClick={wake.toggle}
-              className={`min-h-[40px] flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold transition whitespace-nowrap ${
-                wake.on ? 'bg-emerald-600 text-white' : 'bg-[#232D23] hover:bg-[#374437]'
+              className={`min-h-[40px] flex items-center gap-1.5 rounded-btn px-3 py-2 text-xs sm:text-sm font-semibold transition whitespace-nowrap ${
+                wake.on ? 'bg-brand text-on-brand' : 'bg-[#1D261F] hover:bg-[#2A362D] border border-white/10'
               }`}
             >
               <Sun size={15} />
@@ -273,7 +273,7 @@ export const KitchenDashboard: React.FC = () => {
           )}
           <button
             onClick={fullscreen}
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl bg-[#232D23] hover:bg-[#374437] transition"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-btn bg-[#1D261F] hover:bg-[#2A362D] border border-white/10 transition"
             aria-label="Full screen"
           >
             <Maximize size={15} />
@@ -284,7 +284,7 @@ export const KitchenDashboard: React.FC = () => {
       <StoreControls dark />
 
       {/* Phones: 4-column segmented stage switcher — all stages visible at once */}
-      <div className="lg:hidden grid grid-cols-4 gap-1 p-1 bg-[#232D23] rounded-xl">
+      <div className="lg:hidden grid grid-cols-4 gap-1 p-1 bg-[#1D261F] border border-white/10 rounded-2xl">
         {COLUMNS.map((c) => {
           const n = byColumn.get(c.id)?.length || 0;
           const active = tab === c.id;
@@ -292,14 +292,14 @@ export const KitchenDashboard: React.FC = () => {
             <button
               key={c.id}
               onClick={() => setTab(c.id)}
-              className={`min-h-[40px] flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold transition whitespace-nowrap ${
-                active ? 'bg-[#EADDC5] text-[#151B15] shadow-xs' : 'text-[#9EB09E] hover:text-[#FAF6F0]'
+              className={`min-h-[40px] flex items-center justify-center gap-1.5 rounded-btn px-2 py-2 text-xs font-bold transition whitespace-nowrap ${
+                active ? 'bg-brand text-on-brand shadow-xs' : 'text-[#9EB09E] hover:text-[#FAF6F0]'
               }`}
             >
               <span>{c.shortTitle}</span>
               <span
                 className={`min-w-4 h-4 px-1 rounded-full text-[10px] font-mono tabular-nums flex items-center justify-center ${
-                  n && c.id === 'new' ? 'bg-red-500 text-white' : active ? 'bg-[#151B15]/20 text-[#151B15]' : 'bg-white/10 text-[#FAF6F0]'
+                  n && c.id === 'new' ? 'bg-red-500 text-white' : active ? 'bg-black/25 text-current' : 'bg-white/10 text-[#FAF6F0]'
                 }`}
               >
                 {n}

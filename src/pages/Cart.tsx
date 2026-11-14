@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { arrayUnion, doc, getDoc, increment, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import {
   AlertCircle,
@@ -30,7 +30,7 @@ import { useStorefrontUI } from '../components/Layout';
 import { useCartPricing } from '../hooks/useCartPricing';
 import { ApiError, api } from '../lib/api';
 import { formatMoney, fromCents, parseAmount } from '../lib/money';
-import { TIP_PRESETS, computeTotals, loyaltyPointsFor, promoDiscountCents, promoError, tipCents, type OrderTotals, type TipChoice } from '../lib/pricing';
+import { TIP_PRESETS, computeTotals, promoDiscountCents, promoError, tipCents, type OrderTotals, type TipChoice } from '../lib/pricing';
 import { generateTimeSlots, type TimeSlot } from '../lib/hours';
 import { generateOrderCode } from '../lib/ids';
 import { formatDistance, geocodeAddressNominatim, haversineDistanceKm, isValidGeoPoint, reverseGeocodeNominatim, sanitizeGeoPoint } from '../lib/geo';
@@ -516,21 +516,6 @@ export const Cart: React.FC = () => {
 
         await setDoc(doc(db, 'orders', code), orderData);
         targetOrderId = code;
-
-        // Best effort updates for statistics and promo usage
-        updateDoc(doc(db, 'users', userProfile.uid), {
-          totalOrders: increment(1),
-          totalSpent: increment(totals.total),
-          loyaltyPoints: increment(loyaltyPointsFor(totals.subtotal, totals.discount)),
-          lastOrderDate: serverTimestamp(),
-        }).catch(() => undefined);
-
-        if (promoCode && !promoProblem) {
-          updateDoc(doc(db, 'promos', promoCode), {
-            usedCount: increment(1),
-            usedBy: arrayUnion(userProfile.uid),
-          }).catch(() => undefined);
-        }
       }
 
       // Remember contact details for next time (best effort).
@@ -561,16 +546,6 @@ export const Cart: React.FC = () => {
   };
 
   const onPaid = async (orderId: string) => {
-    try {
-      await updateDoc(doc(db, 'orders', orderId), {
-        status: 'new',
-        paymentStatus: 'paid',
-        paidAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // Ignored if already captured
-    }
     try {
       await api.confirmPayment(orderId);
     } catch {

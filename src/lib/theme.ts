@@ -188,6 +188,34 @@ export function themeStyle(theme: ResolvedTheme): CSSProperties {
   } as CSSProperties;
 }
 
+/**
+ * Brand tokens applied to the restaurant dashboard & driver screens so the workspace
+ * matches the restaurant's brand colors, typography, and corner style while keeping
+ * crisp, high-legibility light/warm surfaces.
+ */
+export function brandThemeStyle(theme: ResolvedTheme): CSSProperties {
+  const r = CORNERS[theme.corners];
+  const font = FONT_PAIRINGS.find((f) => f.id === theme.font) || FONT_PAIRINGS[0];
+  return {
+    '--color-brand': theme.brandColor,
+    '--color-on-brand': readableTextOn(theme.brandColor),
+    '--color-accent': theme.accentColor,
+    '--color-on-accent': readableTextOn(theme.accentColor),
+    '--color-page': '#F6F7F5',
+    '--color-card': '#FFFFFF',
+    '--color-ink': '#121615',
+    '--color-muted': '#6E7A74',
+    '--color-line': '#E8ECE9',
+    '--color-soft': '#F1F4F2',
+    '--radius-card': r.card,
+    '--radius-btn': r.btn,
+    '--radius-chip': r.chip,
+    '--font-sans': font.body,
+    '--font-display': font.display,
+    colorScheme: 'light',
+  } as CSSProperties;
+}
+
 /** Owner-facing warnings shown in the appearance editor. */
 export function themeWarnings(theme: ResolvedTheme): string[] {
   const warnings: string[] = [];

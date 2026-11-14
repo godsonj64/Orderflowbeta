@@ -158,19 +158,19 @@ export const AdminPromos: React.FC = () => {
     <div className="space-y-4 sm:space-y-5">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Promo codes</h1>
-          <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Discounts are validated and applied by the server at checkout.</p>
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">Promo codes</h1>
+          <p className="text-xs sm:text-sm text-muted mt-0.5">Discounts are validated and applied by the server at checkout.</p>
         </div>
         <button
           onClick={() => setEditing({ promo: null, form: { ...emptyForm } })}
-          className="min-h-[42px] px-4 py-2 rounded-xl bg-gray-900 hover:bg-black text-white font-semibold text-sm flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          className="min-h-[42px] px-4 py-2 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm shadow-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 transition"
         >
           <Plus size={16} /> New code
         </button>
       </div>
 
       {promos.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-10 text-center text-gray-500 text-sm">
+        <div className="bg-white rounded-card border border-dashed border-line p-10 text-center text-muted text-sm">
           No promo codes yet. Create one to reward regulars or run a weekend deal.
         </div>
       ) : (
@@ -182,28 +182,28 @@ export const AdminPromos: React.FC = () => {
             return (
               <article
                 key={p.id}
-                className={`bg-white rounded-2xl border border-gray-200/80 p-4 sm:p-5 flex flex-col justify-between gap-3.5 ${
+                className={`bg-white rounded-card border border-line shadow-ios-sm p-4 sm:p-5 flex flex-col justify-between gap-3.5 ${
                   p.active && !expired && !exhausted ? '' : 'opacity-70'
                 }`}
               >
                 <div className="space-y-2">
                   <header className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h3 className="font-extrabold font-mono text-lg tracking-tight text-gray-900">{p.id}</h3>
-                      <p className="text-sm font-semibold text-gray-700 mt-0.5 tabular-nums">{describe(p)}</p>
-                      {p.description && <p className="text-xs text-gray-500 mt-0.5">{p.description}</p>}
+                      <h3 className="font-extrabold font-mono text-lg tracking-tight text-brand">{p.id}</h3>
+                      <p className="text-sm font-semibold text-ink mt-0.5 tabular-nums">{describe(p)}</p>
+                      {p.description && <p className="text-xs text-muted mt-0.5">{p.description}</p>}
                     </div>
                     <button
                       onClick={() => toggle(p)}
-                      className={`shrink-0 min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        p.active ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-100 text-gray-500'
+                      className={`shrink-0 min-h-[34px] px-3 py-1 rounded-btn text-xs font-bold transition ${
+                        p.active ? 'bg-accent text-brand border border-brand/20' : 'bg-soft text-muted border border-line'
                       }`}
                     >
                       {p.active ? 'Active' : 'Off'}
                     </button>
                   </header>
 
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 tabular-nums">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted tabular-nums">
                     <span>
                       {p.usedCount || 0}
                       {p.usageLimit ? ` / ${p.usageLimit}` : ''} used{exhausted ? ' (limit reached)' : ''}
@@ -221,16 +221,16 @@ export const AdminPromos: React.FC = () => {
                   </div>
                 </div>
 
-                <footer className="flex gap-2 pt-1 border-t border-gray-100">
+                <footer className="flex gap-2 pt-1 border-t border-line">
                   <button
                     onClick={() => setEditing({ promo: p, form: fromPromo(p) })}
-                    className="flex-1 min-h-[38px] py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-xs sm:text-sm font-semibold transition"
+                    className="flex-1 min-h-[38px] py-2 rounded-btn bg-soft hover:bg-gray-200/70 text-ink text-xs sm:text-sm font-semibold transition"
                   >
                     Edit code
                   </button>
                   <button
                     onClick={() => setToDelete(p)}
-                    className="min-h-[38px] px-3.5 py-2 rounded-xl text-red-600 hover:bg-red-50 text-xs sm:text-sm font-semibold transition"
+                    className="min-h-[38px] px-3.5 py-2 rounded-btn text-red-600 hover:bg-red-50 text-xs sm:text-sm font-semibold transition"
                     aria-label={`Delete ${p.id}`}
                   >
                     <Trash2 size={15} />
@@ -249,7 +249,7 @@ export const AdminPromos: React.FC = () => {
         size="md"
         title={editing?.promo ? `Edit ${editing.promo.id}` : 'New promo code'}
         footer={
-          <button onClick={save} disabled={busy} className="w-full py-3 rounded-2xl bg-gray-900 text-white font-semibold flex items-center justify-center gap-2">
+          <button onClick={save} disabled={busy} className="w-full py-3 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold flex items-center justify-center gap-2">
             {busy && <Spinner size={16} />} Save
           </button>
         }

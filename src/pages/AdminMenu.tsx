@@ -15,13 +15,14 @@ const UNCATEGORIZED = '__uncategorized__';
 const sortItems = (a: MenuItem, b: MenuItem) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0) || a.name.localeCompare(b.name);
 
 export const AdminMenu: React.FC = () => {
-  const { categories, items, ensureCatalogPersisted, menuLoading } = useStore();
+  const { categories, items, usingDefaultCatalog, ensureCatalogPersisted, clearMenuCatalog, menuLoading } = useStore();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [editing, setEditing] = useState<{ item: MenuItem | null; categoryId: string } | null>(null);
   const [categoryForm, setCategoryForm] = useState<{ category: MenuCategory | null; name: string; description: string } | null>(null);
   const [categoryMenu, setCategoryMenu] = useState<MenuCategory | null>(null);
   const [deleteCategory, setDeleteCategory] = useState<MenuCategory | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const categoryIds = useMemo(() => new Set(categories.map((c) => c.id)), [categories]);
@@ -153,23 +154,32 @@ export const AdminMenu: React.FC = () => {
     <div className="space-y-4 sm:space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end gap-3 justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Menu</h1>
-          <p className="text-xs sm:text-sm text-gray-500 tabular-nums mt-0.5">
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-ink">Menu</h1>
+          <p className="text-xs sm:text-sm text-muted tabular-nums mt-0.5">
             {stats.total} items · {stats.soldOut} sold out · {stats.hidden} hidden
             {stats.noPhoto > 0 && ` · ${stats.noPhoto} without photo`}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {(usingDefaultCatalog || categories.length > 0 || items.length > 0) && (
+            <button
+              type="button"
+              onClick={() => setConfirmClearAll(true)}
+              className="min-h-[42px] px-3.5 py-2 rounded-btn bg-white border border-red-200 hover:bg-red-50 font-bold text-xs sm:text-sm text-red-600 flex items-center justify-center gap-1.5 shadow-2xs transition whitespace-nowrap"
+            >
+              <Trash2 size={15} /> {usingDefaultCatalog ? 'Clear sample menu' : 'Clear all'}
+            </button>
+          )}
           <button
             onClick={() => setCategoryForm({ category: null, name: '', description: '' })}
-            className="flex-1 sm:flex-initial min-h-[42px] px-4 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 font-semibold text-sm flex items-center justify-center gap-1.5 transition whitespace-nowrap"
+            className="flex-1 sm:flex-initial min-h-[42px] px-4 py-2 rounded-btn bg-white border border-line hover:bg-soft font-bold text-sm text-ink flex items-center justify-center gap-1.5 shadow-2xs transition whitespace-nowrap"
           >
             <Plus size={16} /> Category
           </button>
           <button
             onClick={() => setEditing({ item: null, categoryId: (selectedCategory !== 'all' ? selectedCategory : categories[0]?.id) || '' })}
             disabled={!categories.length}
-            className="flex-1 sm:flex-initial min-h-[42px] px-4 py-2 rounded-xl bg-gray-900 hover:bg-black text-white font-semibold text-sm flex items-center justify-center gap-1.5 disabled:opacity-40 transition whitespace-nowrap"
+            className="flex-1 sm:flex-initial min-h-[42px] px-4 py-2 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-40 transition whitespace-nowrap"
             title={categories.length ? undefined : 'Create a category first'}
           >
             <Plus size={16} /> New item
@@ -177,15 +187,30 @@ export const AdminMenu: React.FC = () => {
         </div>
       </div>
 
+      {usingDefaultCatalog && (
+        <div className="rounded-card border border-brand/20 bg-accent/60 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs sm:text-sm text-ink">
+            <span className="font-bold">Sample starter menu is active.</span> Edit or delete any item below to make it yours, or clear the sample menu to start from scratch.
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfirmClearAll(true)}
+            className="self-start sm:self-center shrink-0 px-3.5 py-1.5 rounded-btn bg-white border border-line text-xs font-bold text-red-600 hover:bg-red-50 transition"
+          >
+            Clear sample menu
+          </button>
+        </div>
+      )}
+
       {/* Search + Quick Category Filter for fast mobile navigation */}
       <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
         {categories.length > 1 && (
-          <div className="flex items-center gap-1 p-1 bg-gray-200/60 rounded-xl overflow-x-auto hide-scrollbar">
+          <div className="flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl overflow-x-auto hide-scrollbar">
             <button
               type="button"
               onClick={() => setSelectedCategory('all')}
-              className={`shrink-0 min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-                selectedCategory === 'all' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+              className={`shrink-0 min-h-[34px] px-3 py-1 rounded-btn text-xs font-bold transition whitespace-nowrap ${
+                selectedCategory === 'all' ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
               }`}
             >
               All ({categories.length})
@@ -195,8 +220,8 @@ export const AdminMenu: React.FC = () => {
                 key={c.id}
                 type="button"
                 onClick={() => setSelectedCategory(c.id)}
-                className={`shrink-0 min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-                  selectedCategory === c.id ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                className={`shrink-0 min-h-[34px] px-3 py-1 rounded-btn text-xs font-bold transition whitespace-nowrap ${
+                  selectedCategory === c.id ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
                 }`}
               >
                 {c.name}
@@ -205,33 +230,33 @@ export const AdminMenu: React.FC = () => {
           </div>
         )}
         <div className="relative sm:ml-auto sm:w-72">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search menu items…" className={`${adminInput} pl-9`} />
         </div>
       </div>
 
       {categories.length === 0 && (
-        <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-10 text-center">
-          <p className="font-semibold mb-1">Start your menu</p>
-          <p className="text-sm text-gray-500 mb-4">Create a category (like “Burgers” or “Drinks”), then add items to it.</p>
-          <button onClick={() => setCategoryForm({ category: null, name: '', description: '' })} className="px-5 py-3 rounded-xl bg-gray-900 text-white font-semibold text-sm">
+        <div className="bg-white rounded-card border border-dashed border-line p-10 text-center">
+          <p className="font-display font-bold mb-1 text-ink">Start your menu</p>
+          <p className="text-sm text-muted mb-4">Create a category (like “Burgers” or “Drinks”), then add items to it.</p>
+          <button onClick={() => setCategoryForm({ category: null, name: '', description: '' })} className="px-5 py-3 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm">
             Create first category
           </button>
         </div>
       )}
 
       {sections.map(({ category, id, items: list }) => (
-        <section key={id} className="cv-section bg-white rounded-2xl border border-gray-200/80 overflow-hidden">
-          <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50/70">
+        <section key={id} className="cv-section bg-white rounded-card border border-line shadow-ios-sm overflow-hidden">
+          <header className="flex items-center gap-2 px-4 py-3 border-b border-line bg-soft/60">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h2 className={`font-bold text-base truncate ${category && !category.active ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                <h2 className={`font-display font-extrabold text-base truncate ${category && !category.active ? 'text-muted line-through' : 'text-ink'}`}>
                   {category ? category.name : 'Uncategorized'}
                 </h2>
-                <span className="text-xs text-gray-400 font-mono tabular-nums">({list.length})</span>
+                <span className="text-xs text-muted font-mono tabular-nums">({list.length})</span>
               </div>
               {(!category || !category.active || category.description) && (
-                <p className="text-xs text-gray-500 truncate mt-0.5">
+                <p className="text-xs text-muted truncate mt-0.5">
                   {category ? (!category.active ? 'Hidden from customers' : category.description) : 'Move these items to a category so customers can see them.'}
                 </p>
               )}
@@ -325,7 +350,7 @@ export const AdminMenu: React.FC = () => {
               <li>
                 <button
                   onClick={() => setEditing({ item: null, categoryId: category.id })}
-                  className="w-full min-h-[44px] px-4 py-2.5 text-xs sm:text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 flex items-center gap-1.5 transition"
+                  className="w-full min-h-[44px] px-4 py-2.5 text-xs sm:text-sm font-bold text-brand hover:bg-accent/50 flex items-center gap-1.5 transition"
                 >
                   <Plus size={15} /> Add item to {category.name}
                 </button>
@@ -360,7 +385,7 @@ export const AdminMenu: React.FC = () => {
                   setCategoryMenu(null);
                   action();
                 }}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl font-semibold text-left hover:bg-gray-50 ${danger ? 'text-red-600' : ''}`}
+                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-btn font-semibold text-left hover:bg-soft ${danger ? 'text-red-600' : ''}`}
               >
                 <Icon size={18} /> {label}
               </button>
@@ -376,7 +401,7 @@ export const AdminMenu: React.FC = () => {
         size="sm"
         title={categoryForm?.category ? 'Edit category' : 'New category'}
         footer={
-          <button onClick={saveCategory} disabled={busy} className="w-full py-3 rounded-2xl bg-gray-900 text-white font-semibold flex items-center justify-center gap-2">
+          <button onClick={saveCategory} disabled={busy} className="w-full py-3 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold flex items-center justify-center gap-2">
             {busy && <Spinner size={16} />} Save
           </button>
         }
@@ -406,6 +431,28 @@ export const AdminMenu: React.FC = () => {
         confirmLabel="Delete"
         onCancel={() => setDeleteCategory(null)}
         onConfirm={confirmDeleteCategory}
+      />
+
+      <ConfirmDialog
+        open={confirmClearAll}
+        danger
+        busy={busy}
+        title={usingDefaultCatalog ? 'Clear sample starter menu?' : 'Clear entire menu?'}
+        message="All current categories and items will be removed so you can build your own menu from a clean slate."
+        confirmLabel="Clear menu"
+        onCancel={() => setConfirmClearAll(false)}
+        onConfirm={async () => {
+          setBusy(true);
+          try {
+            await clearMenuCatalog();
+            toast.success('Menu cleared — ready for your own categories and items');
+            setConfirmClearAll(false);
+          } catch (err) {
+            toast.error(friendlyError(err));
+          } finally {
+            setBusy(false);
+          }
+        }}
       />
     </div>
   );

@@ -143,6 +143,8 @@ export interface RestaurantProfile {
   theme?: StorefrontTheme;
   social?: SocialLinks;
   location?: GeoPoint;
+  /** True once the owner has customized or cleared the starter sample menu so defaults never reappear. */
+  starterMenuCleared?: boolean;
 }
 
 export interface MenuCategory {

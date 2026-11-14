@@ -124,10 +124,17 @@ async function authenticate(req: Request): Promise<AuthedUser> {
     const snap = await db.collection('users').doc(decoded.uid).get();
     profile = snap.exists ? (snap.data() as UserProfile) : null;
     if (profile?.role) role = profile.role;
+    if (role === 'customer' && decoded.email && decoded.email_verified !== false) {
+      const inviteSnap = await db.collection('users').doc(`invite_${decoded.email.toLowerCase()}`).get();
+      if (inviteSnap.exists) {
+        const invited = inviteSnap.data() as UserProfile;
+        if (invited?.role) role = invited.role;
+      }
+    }
   } catch {
     // If admin SDK has no credentials, role safely defaults to customer
   }
-  if (BOOTSTRAP_ADMINS.includes((decoded.email || '').toLowerCase())) role = 'admin';
+  if (decoded.email_verified !== false && BOOTSTRAP_ADMINS.includes((decoded.email || '').toLowerCase())) role = 'admin';
   return { uid: decoded.uid, email: decoded.email || profile?.email || '', role, profile };
 }
 
@@ -313,6 +320,12 @@ async function startServer() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(self), payment=(self)');
+    next();
+  });
 
   // Stripe webhooks need the raw body for signature verification, so this route is
   // registered before the JSON body parser.
@@ -385,43 +398,8 @@ async function startServer() {
     }),
   );
 
-  app.get('/api/config', (_req, res) => {
-    res.json({ cardPayments: stripeEnabled() });
-  });
-
-  app.post(
-    '/api/create-payment-intent',
-    route(async (req, res) => {
-      const user = await authenticate(req);
-      const amountCents = Math.round(Number(req.body?.amountCents));
-      const orderId = str(req.body?.orderId, 64);
-      if (!amountCents || amountCents < MIN_CARD_CHARGE_CENTS) {
-        throw new HttpError(400, 'Invalid payment amount.');
-      }
-      if (!orderId) {
-        throw new HttpError(400, 'Invalid order id.');
-      }
-      const pi = await getStripe().paymentIntents.create(
-        {
-          amount: amountCents,
-          currency: CURRENCY,
-          description: `Order #${orderId}`,
-          metadata: { orderId, uid: user.uid },
-          automatic_payment_methods: { enabled: true },
-        },
-        { idempotencyKey: `order-${orderId}` },
-      );
-      res.json({ clientSecret: pi.client_secret, paymentIntentId: pi.id });
-    }),
-  );
-
-  // -------------------------------------------------------------------------
-  // Checkout: the server prices the order from Firestore data. The client only
-  // sends item ids, quantities and choices.
-  // -------------------------------------------------------------------------
-
   // 3-second micro-cache for restaurant/profile so simultaneous rush-hour checkouts
-  // don't hammer the single profile document on every request.
+  // and initial splash screen loads don't hammer the single profile document on every request.
   let cachedProfile: { at: number; data: RestaurantProfile | null } | null = null;
   async function loadRestaurantProfile(): Promise<RestaurantProfile> {
     if (cachedProfile && Date.now() - cachedProfile.at < 3000 && cachedProfile.data) {
@@ -443,6 +421,41 @@ async function startServer() {
       }
     }
   }
+
+  app.get(
+    '/api/config',
+    route(async (_req, res) => {
+      const profile = await loadRestaurantProfile().catch(() => null);
+      res.json({ cardPayments: stripeEnabled(), profile });
+    }),
+  );
+
+  app.post(
+    '/api/create-payment-intent',
+    route(async (req, res) => {
+      const user = await authenticate(req);
+      rateLimit(`pi:${user.uid}`, 15, 10 * 60_000);
+      const amountCents = Math.round(Number(req.body?.amountCents));
+      const orderId = str(req.body?.orderId, 64);
+      if (!Number.isFinite(amountCents) || amountCents < MIN_CARD_CHARGE_CENTS || amountCents > 1_000_000) {
+        throw new HttpError(400, 'Invalid payment amount.');
+      }
+      if (!orderId || !/^[A-Z0-9_-]{4,64}$/i.test(orderId)) {
+        throw new HttpError(400, 'Invalid order id.');
+      }
+      const pi = await getStripe().paymentIntents.create(
+        {
+          amount: amountCents,
+          currency: CURRENCY,
+          description: `Order #${orderId}`,
+          metadata: { orderId, uid: user.uid },
+          automatic_payment_methods: { enabled: true },
+        },
+        { idempotencyKey: `order-${orderId}` },
+      );
+      res.json({ clientSecret: pi.client_secret, paymentIntentId: pi.id });
+    }),
+  );
 
   app.post(
     '/api/checkout',
@@ -543,9 +556,12 @@ async function startServer() {
       const activeCategoryIds = new Set(
         categorySnaps.filter((s) => s.exists && (s.data() as MenuCategory).active !== false).map((s) => s.id),
       );
-      if (items.size === 0) {
-        const anyItemSnap = await db.collection('items').limit(1).get();
-        if (anyItemSnap.empty) {
+      if (items.size === 0 && !profile.starterMenuCleared) {
+        const [anyItemSnap, anyCategorySnap] = await Promise.all([
+          db.collection('items').limit(1).get(),
+          db.collection('categories').limit(1).get(),
+        ]);
+        if (anyItemSnap.empty && anyCategorySnap.empty) {
           for (const item of DEFAULT_ITEMS) items.set(item.id, item);
           for (const cat of DEFAULT_CATEGORIES) if (cat.active !== false) activeCategoryIds.add(cat.id);
         }
@@ -661,7 +677,7 @@ async function startServer() {
       if (!orderRef) throw new HttpError(503, 'Could not create your order. Please try again.');
 
       if (deliveryLocation) {
-        liveOrderLocations.set(orderRef.id, { deliveryLocation, updatedAt: Date.now() });
+        liveOrderLocations.set(orderRef.id, { customerId: user.uid, deliveryLocation, updatedAt: Date.now() });
       }
 
       let clientSecret: string | null = null;
@@ -868,7 +884,12 @@ async function startServer() {
   const LIVE_LOCATION_TTL_MS = 6 * 60 * 60 * 1000;
   const liveOrderLocations = new Map<
     string,
-    { driverLocation?: ReturnType<typeof sanitizeGeoPoint>; deliveryLocation?: ReturnType<typeof sanitizeGeoPoint>; updatedAt: number }
+    {
+      customerId?: string;
+      driverLocation?: ReturnType<typeof sanitizeGeoPoint>;
+      deliveryLocation?: ReturnType<typeof sanitizeGeoPoint>;
+      updatedAt: number;
+    }
   >();
 
   function pruneLiveLocations(now: number) {
@@ -883,11 +904,33 @@ async function startServer() {
     }
   }
 
+  async function verifyLocationOrderAccess(orderId: string, user: AuthedUser): Promise<string | undefined> {
+    const cached = liveOrderLocations.get(orderId);
+    if (cached?.customerId) {
+      if (cached.customerId !== user.uid && !isStaffRole(user.role)) {
+        throw new HttpError(403, 'You do not have access to this order.');
+      }
+      return cached.customerId;
+    }
+    try {
+      const snap = await ordersCol().doc(orderId).get();
+      if (!snap.exists) throw new HttpError(404, 'Order not found.');
+      const order = { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
+      assertCanAccess(order, user);
+      return order.customerId;
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      return isStaffRole(user.role) ? undefined : user.uid;
+    }
+  }
+
   app.get(
     '/api/orders/:id/location',
     route(async (req, res) => {
-      await authenticate(req);
+      const user = await authenticate(req);
       const id = str(req.params.id, 64);
+      if (!id || id.includes('/')) throw new HttpError(400, 'Invalid order id.');
+      await verifyLocationOrderAccess(id, user);
       const entry = liveOrderLocations.get(id);
       res.json({
         driverLocation: entry?.driverLocation || null,
@@ -908,10 +951,16 @@ async function startServer() {
       const driverLoc = sanitizeGeoPoint(req.body?.driverLocation);
       const deliveryLoc = sanitizeGeoPoint(req.body?.deliveryLocation);
       if (!driverLoc && !deliveryLoc) throw new HttpError(400, 'Valid GPS coordinates are required.');
+      if (driverLoc && !isStaffRole(user.role)) {
+        throw new HttpError(403, 'Only drivers or staff can update the driver location.');
+      }
+
+      const customerId = await verifyLocationOrderAccess(id, user);
 
       const now = Date.now();
       const current = liveOrderLocations.get(id) || { updatedAt: now };
       const next = {
+        customerId: customerId || current.customerId,
         driverLocation: driverLoc || current.driverLocation,
         deliveryLocation: deliveryLoc || current.deliveryLocation,
         updatedAt: now,
