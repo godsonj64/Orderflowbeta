@@ -172,14 +172,14 @@ export const AdminMenu: React.FC = () => {
           )}
           <button
             onClick={() => setCategoryForm({ category: null, name: '', description: '' })}
-            className="flex-1 sm:flex-initial min-h-[42px] px-4 py-2 rounded-btn bg-white border border-line hover:bg-soft font-bold text-sm text-ink flex items-center justify-center gap-1.5 shadow-2xs transition whitespace-nowrap"
+            className="flex-1 sm:flex-initial min-h-[38px] px-3.5 py-1.5 rounded-btn bg-white border border-line hover:bg-soft font-bold text-xs sm:text-sm text-ink flex items-center justify-center gap-1.5 shadow-2xs transition whitespace-nowrap"
           >
             <Plus size={16} /> Category
           </button>
           <button
             onClick={() => setEditing({ item: null, categoryId: (selectedCategory !== 'all' ? selectedCategory : categories[0]?.id) || '' })}
             disabled={!categories.length}
-            className="flex-1 sm:flex-initial min-h-[42px] px-4 py-2 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-40 transition whitespace-nowrap"
+            className="flex-1 sm:flex-initial min-h-[38px] px-3.5 py-1.5 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-40 transition whitespace-nowrap"
             title={categories.length ? undefined : 'Create a category first'}
           >
             <Plus size={16} /> New item
@@ -205,7 +205,7 @@ export const AdminMenu: React.FC = () => {
       {/* Search + Quick Category Filter for fast mobile navigation */}
       <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
         {categories.length > 1 && (
-          <div className="flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl overflow-x-auto hide-scrollbar">
+          <div className="flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-btn overflow-x-auto hide-scrollbar">
             <button
               type="button"
               onClick={() => setSelectedCategory('all')}

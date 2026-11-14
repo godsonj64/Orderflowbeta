@@ -13,7 +13,7 @@ interface AuthModalProps {
 type Mode = 'signin' | 'signup' | 'reset';
 
 const inputCls =
-  'w-full px-4 py-3.5 rounded-xl bg-soft/90 border border-transparent text-ink text-sm font-medium placeholder:text-muted/70 focus:bg-card focus:border-brand/40 focus:ring-2 focus:ring-brand/15 outline-none transition';
+  'w-full px-4 py-3 rounded-control bg-soft/90 border border-transparent text-ink text-sm font-medium placeholder:text-muted/70 focus:bg-card focus:border-brand/40 focus:ring-2 focus:ring-brand/15 outline-none transition';
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const { signInWithGoogle, signInWithEmail, signUpWithEmail, resetPassword } = useAuth();
@@ -192,7 +192,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-brand text-on-brand py-3.5 rounded-2xl font-bold text-sm hover:opacity-95 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2 shadow-sm"
+            className="w-full bg-brand text-on-brand py-3 px-4 rounded-btn font-bold text-sm hover:opacity-95 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2 shadow-sm"
           >
             {loading && <Spinner size={18} />}
             {mode === 'signin' ? 'Login' : mode === 'signup' ? 'Register' : 'Continue'}
@@ -234,7 +234,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             <button
               type="button"
               onClick={handleGoogle}
-              className="w-full bg-card border border-line text-ink py-3.5 rounded-2xl text-xs font-bold hover:bg-soft transition flex items-center justify-center gap-2.5"
+              className="w-full bg-card border border-line text-ink py-3 px-4 rounded-btn text-xs font-bold hover:bg-soft transition flex items-center justify-center gap-2.5"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />

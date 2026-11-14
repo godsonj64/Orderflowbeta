@@ -66,10 +66,10 @@ export const SURFACES: Record<SurfaceMode, Surface> = {
   dark: { page: '#0D0F0E', card: '#171A18', ink: '#F4F2ED', muted: '#9AA29B', line: '#2A302C', soft: '#202622' },
 };
 
-const CORNERS: Record<CornerStyle, { card: string; btn: string; chip: string }> = {
-  sharp: { card: '8px', btn: '8px', chip: '8px' },
-  rounded: { card: '18px', btn: '14px', chip: '9999px' },
-  pill: { card: '24px', btn: '9999px', chip: '9999px' },
+export const CORNERS: Record<CornerStyle, { card: string; btn: string; control: string; chip: string }> = {
+  sharp: { card: '6px', btn: '6px', control: '6px', chip: '6px' },
+  rounded: { card: '16px', btn: '12px', control: '12px', chip: '9999px' },
+  pill: { card: '22px', btn: '9999px', control: '14px', chip: '9999px' },
 };
 
 export const THEME_DEFAULTS = {
@@ -181,6 +181,7 @@ export function themeStyle(theme: ResolvedTheme): CSSProperties {
     '--color-soft': s.soft,
     '--radius-card': r.card,
     '--radius-btn': r.btn,
+    '--radius-control': r.control,
     '--radius-chip': r.chip,
     '--font-sans': font.body,
     '--font-display': font.display,
@@ -209,6 +210,7 @@ export function brandThemeStyle(theme: ResolvedTheme): CSSProperties {
     '--color-soft': '#F1F4F2',
     '--radius-card': r.card,
     '--radius-btn': r.btn,
+    '--radius-control': r.control,
     '--radius-chip': r.chip,
     '--font-sans': font.body,
     '--font-display': font.display,

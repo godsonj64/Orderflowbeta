@@ -23,20 +23,43 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function Choice<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string; icon?: React.ElementType }[]; onChange: (v: T) => void }) {
+function Choice<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string; icon?: React.ElementType; previewRadius?: string }[];
+  onChange: (v: T) => void;
+}) {
+  const hasIcons = options.some((o) => !!o.icon);
   return (
     <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
-      {options.map(({ value: v, label, icon: Icon }) => (
+      {options.map(({ value: v, label, icon: Icon, previewRadius }) => (
         <button
           key={v}
           type="button"
           onClick={() => onChange(v)}
-          className={`flex flex-col items-center gap-1 rounded-btn border px-2 py-2.5 text-xs font-bold transition ${
+          style={previewRadius ? { borderRadius: previewRadius } : undefined}
+          className={`${
+            hasIcons
+              ? 'flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 rounded-control py-2 px-2'
+              : 'flex items-center justify-center gap-1.5 rounded-btn min-h-[38px] py-1.5 px-2.5'
+          } border text-xs font-bold transition truncate ${
             value === v ? 'border-brand bg-brand text-on-brand shadow-xs' : 'border-line bg-white text-ink hover:bg-soft'
           }`}
         >
-          {Icon && <Icon size={18} />}
-          {label}
+          {Icon && <Icon size={16} className="shrink-0" />}
+          {previewRadius && (
+            <span
+              aria-hidden="true"
+              style={{ borderRadius: previewRadius }}
+              className={`w-3.5 h-2.5 border-2 shrink-0 ${
+                value === v ? 'border-on-brand bg-on-brand/20' : 'border-current opacity-65'
+              }`}
+            />
+          )}
+          <span className="truncate">{label}</span>
         </button>
       ))}
     </div>
@@ -49,7 +72,7 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   return (
     <Field label={label}>
       <div className="flex items-center gap-2">
-        <input type="color" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} className="w-12 h-11 rounded-xl border border-gray-200 p-1 bg-white cursor-pointer" aria-label={`${label} picker`} />
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} className="w-12 h-10 rounded-control border border-gray-200 p-1 bg-white cursor-pointer shrink-0" aria-label={`${label} picker`} />
         <input
           value={text}
           onChange={(e) => {
@@ -144,9 +167,9 @@ export function AppearanceSettings({ draft, update }: Props) {
                 key={p.id}
                 type="button"
                 onClick={() => applyPreset(p.id)}
-                className={`text-left rounded-btn border p-2.5 transition ${active ? 'border-brand ring-2 ring-brand bg-accent/25' : 'border-line hover:border-brand/50'}`}
+                className={`text-left rounded-card border p-2.5 transition ${active ? 'border-brand ring-2 ring-brand bg-accent/25' : 'border-line hover:border-brand/50'}`}
               >
-                <div className="h-14 rounded-xl flex items-end gap-1 p-1.5" style={{ background: s.page, border: `1px solid ${s.line}` }}>
+                <div className="h-14 rounded-control flex items-end gap-1 p-1.5" style={{ background: s.page, border: `1px solid ${s.line}` }}>
                   <span className="w-6 h-6 rounded-full" style={{ background: p.brandColor }} />
                   <span className="w-4 h-4 rounded-full" style={{ background: p.accentColor }} />
                   <span className="ml-auto w-8 h-4 rounded" style={{ background: s.card }} />
@@ -165,7 +188,7 @@ export function AppearanceSettings({ draft, update }: Props) {
           <ColorField label="Accent color" value={theme.accentColor} onChange={(v) => setTheme({ accentColor: v })} />
         </div>
         {warnings.map((w) => (
-          <p key={w} className="text-xs text-amber-800 bg-amber-50 rounded-xl px-3 py-2 flex gap-2">
+          <p key={w} className="text-xs text-amber-800 bg-amber-50 rounded-control px-3 py-2 flex gap-2">
             <AlertTriangle size={14} className="shrink-0 mt-0.5" /> {w}
           </p>
         ))}
@@ -201,9 +224,9 @@ export function AppearanceSettings({ draft, update }: Props) {
             value={theme.corners}
             onChange={(corners) => setTheme({ corners })}
             options={[
-              { value: 'sharp', label: 'Sharp' },
-              { value: 'rounded', label: 'Rounded' },
-              { value: 'pill', label: 'Pill' },
+              { value: 'sharp', label: 'Sharp', previewRadius: '6px' },
+              { value: 'rounded', label: 'Rounded', previewRadius: '12px' },
+              { value: 'pill', label: 'Pill', previewRadius: '9999px' },
             ]}
           />
         </Field>

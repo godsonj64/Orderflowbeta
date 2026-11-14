@@ -61,11 +61,11 @@ const writePending = (id: string | null) => {
 const isValidPhone = (p: string) => /^[+()\-.\s\d]{7,20}$/.test(p.trim()) && p.replace(/\D/g, '').length >= 7;
 
 const inputCls =
-  'w-full rounded-xl border border-line bg-soft/70 focus:bg-card px-3.5 py-3 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none transition';
+  'w-full rounded-control border border-line bg-soft/70 focus:bg-card px-3.5 py-2.5 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none transition';
 
 function Card({ title, action, children, id }: { title?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; id?: string }) {
   return (
-    <section id={id} className="bg-card rounded-2xl border border-line p-4 sm:p-5 scroll-mt-24">
+    <section id={id} className="bg-card rounded-card border border-line p-4 sm:p-5 scroll-mt-24">
       {(title || action) && (
         <div className="flex items-center justify-between gap-2 mb-3.5">
           {title && <h2 className="font-display font-extrabold text-base text-ink">{title}</h2>}
@@ -94,7 +94,7 @@ function Segmented<T extends string>({
           type="button"
           disabled={disabled}
           onClick={() => onChange(v)}
-          className={`flex flex-col items-center justify-center gap-0.5 rounded-xl border py-3 px-2 text-sm font-semibold transition disabled:opacity-40 ${
+          className={`flex flex-col items-center justify-center gap-0.5 rounded-control border py-2.5 px-2 text-sm font-semibold transition disabled:opacity-40 ${
             value === v ? 'border-brand bg-brand text-on-brand' : 'border-line bg-soft/50 hover:bg-soft'
           }`}
         >
@@ -123,7 +123,7 @@ function TipSelector({ label, subtotalCents, value, onChange }: { label: string;
             key={pct}
             type="button"
             onClick={() => onChange({ percent: pct })}
-            className={`py-2.5 rounded-xl text-sm font-semibold border transition ${
+            className={`py-2 rounded-btn text-xs sm:text-sm font-semibold border transition ${
               !isCustom && value.percent === pct ? 'bg-brand text-on-brand border-brand' : 'bg-soft/60 border-line hover:bg-soft'
             }`}
           >
@@ -133,7 +133,7 @@ function TipSelector({ label, subtotalCents, value, onChange }: { label: string;
         <button
           type="button"
           onClick={() => onChange({ percent: null, amount: parseAmount(custom, 0, { max: 500 }) })}
-          className={`py-2.5 rounded-xl text-sm font-semibold border transition ${isCustom ? 'bg-brand text-on-brand border-brand' : 'bg-soft/60 border-line hover:bg-soft'}`}
+          className={`py-2 rounded-btn text-xs sm:text-sm font-semibold border transition ${isCustom ? 'bg-brand text-on-brand border-brand' : 'bg-soft/60 border-line hover:bg-soft'}`}
         >
           Other
         </button>
@@ -616,7 +616,7 @@ export const Cart: React.FC = () => {
         </div>
         <h1 className="font-display text-2xl sm:text-3xl font-extrabold mb-2">Your cart is empty</h1>
         <p className="text-muted mb-8">Add something delicious from the menu.</p>
-        <Link to="/" className="inline-block bg-brand text-on-brand px-8 py-3.5 rounded-2xl font-bold shadow-ios">
+        <Link to="/" className="inline-block bg-brand text-on-brand px-7 py-3 rounded-btn font-bold shadow-ios">
           Browse the menu
         </Link>
       </div>
@@ -631,7 +631,7 @@ export const Cart: React.FC = () => {
       type="button"
       onClick={() => placeOrder()}
       disabled={ctaDisabled}
-      className="w-full bg-brand text-on-brand py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 shadow-ios-lg disabled:opacity-50 active:scale-[0.99] transition"
+      className="w-full bg-brand text-on-brand py-3.5 px-5 rounded-btn font-bold text-base flex items-center justify-center gap-2 shadow-ios-lg disabled:opacity-50 active:scale-[0.99] transition"
     >
       {placing && <Spinner size={18} />}
       {ctaLabel}
@@ -658,7 +658,7 @@ export const Cart: React.FC = () => {
               if (orderType === 'delivery') setLocationSheetOpen(true);
               else document.getElementById('contact')?.scrollIntoView({ behavior: 'smooth' });
             }}
-            className="w-full text-left rounded-2xl bg-brand text-on-brand p-4 sm:p-5 shadow-ios transition hover:opacity-95 active:scale-[0.99]"
+            className="w-full text-left rounded-card bg-brand text-on-brand p-4 sm:p-5 shadow-ios transition hover:opacity-95 active:scale-[0.99]"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
@@ -672,11 +672,11 @@ export const Cart: React.FC = () => {
               <ChevronRight size={20} className="shrink-0 opacity-90 mt-0.5" />
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/20 border border-white/25 text-xs font-semibold font-mono tabular-nums">
+              <span className="inline-flex items-center px-2.5 py-1 rounded-chip bg-white/20 border border-white/25 text-xs font-semibold font-mono tabular-nums">
                 {distanceBadge}
               </span>
               {when === 'later' && selectedSlot && (
-                <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/20 border border-white/25 text-xs font-semibold">
+                <span className="inline-flex items-center px-2.5 py-1 rounded-chip bg-white/20 border border-white/25 text-xs font-semibold">
                   {selectedDay?.label} · {selectedSlot.timeLabel}
                 </span>
               )}
@@ -708,7 +708,7 @@ export const Cart: React.FC = () => {
                 return (
                   <li key={line.cartItemId} className={`py-3.5 first:pt-0 last:pb-0 flex items-center gap-3.5 ${unavailable ? 'opacity-85' : ''}`}>
                     {/* Item Thumbnail Photo (Kupa My Cart style) */}
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-soft overflow-hidden shrink-0 flex items-center justify-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-control bg-soft overflow-hidden shrink-0 flex items-center justify-center">
                       {imageUrl ? (
                         <img src={imageUrl} alt={line.name} className="w-full h-full object-cover" loading="lazy" />
                       ) : (
@@ -751,7 +751,7 @@ export const Cart: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => updateQuantity(line.cartItemId, line.quantity - 1)}
-                              className="w-9 h-9 rounded-full bg-soft text-ink flex items-center justify-center transition active:scale-90"
+                              className="w-8 h-8 sm:w-9 sm:h-9 rounded-btn bg-soft text-ink flex items-center justify-center transition active:scale-90"
                               aria-label={`Decrease ${line.name}`}
                               disabled={!!payment}
                             >
@@ -761,7 +761,7 @@ export const Cart: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => updateQuantity(line.cartItemId, line.quantity + 1)}
-                              className="w-9 h-9 rounded-full bg-brand text-on-brand flex items-center justify-center transition active:scale-90 disabled:opacity-40"
+                              className="w-8 h-8 sm:w-9 sm:h-9 rounded-btn bg-brand text-on-brand flex items-center justify-center transition active:scale-90 disabled:opacity-40"
                               aria-label={`Increase ${line.name}`}
                               disabled={!!payment || line.quantity >= MAX_LINE_QUANTITY}
                             >
@@ -907,7 +907,7 @@ export const Cart: React.FC = () => {
                       type="button"
                       onClick={useCurrentGpsLocation}
                       disabled={locatingGps}
-                      className="shrink-0 px-3.5 rounded-xl border border-line bg-soft/70 hover:bg-soft text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                      className="shrink-0 px-3.5 rounded-btn border border-line bg-soft/70 hover:bg-soft text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
                       title="Use current GPS location"
                     >
                       {locatingGps ? <Spinner size={14} /> : <LocateFixed size={15} className="text-brand" />}
@@ -921,7 +921,7 @@ export const Cart: React.FC = () => {
                           key={tag}
                           type="button"
                           onClick={() => setAddressLabel(tag)}
-                          className={`px-3 py-1 rounded-full text-xs font-semibold border transition ${
+                          className={`px-3 py-1 rounded-chip text-xs font-semibold border transition ${
                             addressLabel === tag ? 'bg-brand/10 text-brand border-brand/30' : 'bg-soft/60 text-muted border-line'
                           }`}
                         >
@@ -1026,7 +1026,7 @@ export const Cart: React.FC = () => {
                       enterKeyHint="go"
                       maxLength={50}
                     />
-                    <button type="submit" disabled={!promoInput.trim()} className="shrink-0 px-4 rounded-xl bg-soft font-semibold text-sm disabled:opacity-50">
+                    <button type="submit" disabled={!promoInput.trim()} className="shrink-0 px-4 rounded-btn bg-soft font-semibold text-sm disabled:opacity-50">
                       Apply
                     </button>
                   </form>
@@ -1078,7 +1078,7 @@ export const Cart: React.FC = () => {
           <button
             type="button"
             onClick={() => setLocationSheetOpen(false)}
-            className="w-full bg-brand text-on-brand py-4 rounded-2xl font-bold text-base shadow-ios-lg transition active:scale-[0.99]"
+            className="w-full bg-brand text-on-brand py-3.5 px-5 rounded-btn font-bold text-base shadow-ios-lg transition active:scale-[0.99]"
           >
             Confirmation
           </button>

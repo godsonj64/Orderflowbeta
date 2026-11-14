@@ -223,14 +223,14 @@ export const AdminUsers: React.FC = () => {
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="min-h-[42px] px-4 py-2 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-sm shadow-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 transition"
+          className="min-h-[38px] px-3.5 py-1.5 rounded-btn bg-brand hover:opacity-95 text-on-brand font-bold text-xs sm:text-sm shadow-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 transition"
         >
           <UserPlus size={16} /> Add team member
         </button>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
-        <div className="flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl self-start">
+        <div className="flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-btn self-start">
           {(['all', 'team', 'customers'] as Filter[]).map((f) => (
             <button
               key={f}

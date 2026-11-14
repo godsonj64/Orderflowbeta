@@ -534,7 +534,7 @@ export const OrderTracker: React.FC = () => {
           </span>
         </div>
         {cashDue ? (
-          <p className="rounded-btn bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 text-sm font-semibold font-mono tabular-nums">
+          <p className="rounded-control bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 text-sm font-semibold font-mono tabular-nums">
             Please pay {formatMoney(order.total)} in cash {isDelivery ? 'to your driver' : 'when you pick up'}.
           </p>
         ) : order.paymentStatus === 'paid' ? (
@@ -561,7 +561,7 @@ export const OrderTracker: React.FC = () => {
         </ul>
 
         {order.notes && (
-          <div className="mt-4 rounded-btn bg-soft px-3 py-2 text-sm">
+          <div className="mt-4 rounded-control bg-soft px-3 py-2 text-sm">
             <span className="font-semibold">Notes:</span> {order.notes}
           </div>
         )}
@@ -595,7 +595,7 @@ export const OrderTracker: React.FC = () => {
           <h2 className="font-bold mb-3 flex items-center gap-2">
             <Camera size={18} /> Proof of delivery
           </h2>
-          <img src={order.proofOfDeliveryImage || proofPhoto || ''} alt="Proof of delivery" loading="lazy" className="rounded-btn w-full max-w-sm object-cover" />
+          <img src={order.proofOfDeliveryImage || proofPhoto || ''} alt="Proof of delivery" loading="lazy" className="rounded-card w-full max-w-sm object-cover" />
         </section>
       )}
 
@@ -626,9 +626,9 @@ export const OrderTracker: React.FC = () => {
                 onChange={(e) => setComment(e.target.value.slice(0, 1000))}
                 rows={3}
                 placeholder="Tell us more (optional)"
-                className="w-full rounded-btn border border-line bg-page px-3.5 py-2.5 text-sm placeholder:text-muted focus:ring-2 focus:ring-brand outline-none resize-none"
+                className="w-full rounded-control border border-line bg-page px-3.5 py-2.5 text-sm placeholder:text-muted focus:ring-2 focus:ring-brand outline-none resize-none"
               />
-              <button onClick={submitRating} disabled={!rating || submittingRating} className="px-6 py-3 rounded-btn bg-brand text-on-brand font-semibold disabled:opacity-50 flex items-center gap-2">
+              <button onClick={submitRating} disabled={!rating || submittingRating} className="px-5 py-2.5 rounded-btn bg-brand text-on-brand font-semibold text-sm disabled:opacity-50 flex items-center gap-2">
                 {submittingRating && <Spinner size={16} />} Submit rating
               </button>
             </div>

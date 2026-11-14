@@ -180,7 +180,7 @@ export const AdminLayout: React.FC = () => {
           </div>
 
           {/* Zone 2: Desktop Primary Navigation */}
-          <nav className="hidden md:flex items-center gap-1 bg-soft border border-line/80 p-1 rounded-2xl" aria-label="Dashboard sections">
+          <nav className="hidden md:flex items-center gap-1 bg-soft border border-line/80 p-1 rounded-btn" aria-label="Dashboard sections">
             {tabs.map(({ to, label, end, badge }) => (
               <NavLink
                 key={to}
@@ -209,7 +209,7 @@ export const AdminLayout: React.FC = () => {
             {isStaff && (
               <button
                 onClick={toggleSound}
-                className={`min-h-[38px] px-3 py-1.5 rounded-btn text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap shrink-0 ${
+                className={`min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-btn text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap shrink-0 ${
                   soundOn ? 'bg-accent text-on-accent border border-brand/20' : 'bg-soft text-muted hover:text-ink border border-line'
                 }`}
                 title={soundOn ? 'New-order alert sound is on' : 'Turn on new-order alert sound'}
@@ -221,7 +221,7 @@ export const AdminLayout: React.FC = () => {
             )}
             <Link
               to="/"
-              className="min-h-[38px] px-3.5 py-1.5 rounded-btn text-xs font-bold text-brand bg-accent hover:opacity-90 border border-brand/15 flex items-center gap-1.5 transition whitespace-nowrap shrink-0"
+              className="min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-btn text-xs font-bold text-brand bg-accent hover:opacity-90 border border-brand/15 flex items-center gap-1.5 transition whitespace-nowrap shrink-0"
               title="View customer storefront"
             >
               <span className="hidden sm:inline">Storefront</span>

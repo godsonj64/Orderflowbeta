@@ -58,13 +58,13 @@ function GroupPicker({
           <p className={`text-xs ${showError && !satisfied ? 'text-red-600 font-semibold' : 'text-muted'}`}>{describeGroupRule(group)}</p>
         </div>
         {min > 0 && (
-          <span className={`text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full ${satisfied ? 'bg-brand/10 text-brand' : 'bg-soft text-muted'}`}>
+          <span className={`text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-chip ${satisfied ? 'bg-brand/10 text-brand' : 'bg-soft text-muted'}`}>
             {satisfied ? 'Done' : 'Required'}
           </span>
         )}
       </div>
 
-      <div className={`rounded-2xl border overflow-hidden divide-y divide-line bg-card transition ${showError && !satisfied ? 'border-red-400 bg-red-50/20' : 'border-line'}`}>
+      <div className={`rounded-card border overflow-hidden divide-y divide-line bg-card transition ${showError && !satisfied ? 'border-red-400 bg-red-50/20' : 'border-line'}`}>
         {group.modifiers.map((mod) => {
           const checked = picked.includes(mod.id);
           const disabled = !checked && !single && picked.length >= max;
@@ -190,7 +190,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
             type="button"
             onClick={handleAdd}
             disabled={!!disabledReason}
-            className="w-full bg-brand text-on-brand py-4 rounded-2xl font-bold text-sm sm:text-base flex items-center justify-center gap-1.5 shadow-ios-lg transition active:scale-[0.99] disabled:opacity-50"
+            className="w-full bg-brand text-on-brand py-3.5 px-5 rounded-btn font-bold text-sm sm:text-base flex items-center justify-center gap-1.5 shadow-ios-lg transition active:scale-[0.99] disabled:opacity-50"
           >
             <span>{disabledReason || `Add to Cart (${formatMoney(fromCents(unitCents * quantity))})`}</span>
           </button>
@@ -202,7 +202,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
           {/* Dish Hero Image Area */}
           <div className="relative pt-3 px-4 pb-0">
             <div className="w-10 h-1 rounded-full bg-line mx-auto mb-3 sm:hidden" />
-            <div className="relative h-52 sm:h-64 rounded-2xl bg-soft overflow-hidden flex items-center justify-center">
+            <div className="relative h-52 sm:h-64 rounded-card bg-soft overflow-hidden flex items-center justify-center">
               {live.imageUrl && !imgError ? (
                 <img
                   src={live.imageUrl}
@@ -219,7 +219,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
               <button
                 type="button"
                 onClick={onClose}
-                className="absolute top-2.5 right-2.5 w-10 h-10 rounded-full bg-card/85 text-ink backdrop-blur-md shadow-xs flex items-center justify-center hover:bg-card transition"
+                className="absolute top-2.5 right-2.5 w-9 h-9 rounded-btn bg-card/85 text-ink backdrop-blur-md shadow-xs flex items-center justify-center hover:bg-card transition"
                 aria-label="Close"
               >
                 <X size={18} />
@@ -239,7 +239,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                   type="button"
                   onClick={() => toggleFavorite(live.id)}
                   aria-label={isFav ? 'Remove from favorites' : 'Save to favorites'}
-                  className="w-10 h-10 rounded-full bg-soft flex items-center justify-center shrink-0 transition active:scale-90"
+                  className="w-9 h-9 rounded-btn bg-soft flex items-center justify-center shrink-0 transition active:scale-90"
                 >
                   <Heart size={18} className={isFav ? 'fill-red-500 text-red-500' : 'text-muted'} />
                 </button>
@@ -255,7 +255,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                     onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                     disabled={quantity <= 1}
                     aria-label="Decrease quantity"
-                    className="w-10 h-10 rounded-full bg-soft text-ink flex items-center justify-center disabled:opacity-40 transition active:scale-90"
+                    className="w-9 h-9 rounded-btn bg-soft text-ink flex items-center justify-center disabled:opacity-40 transition active:scale-90"
                   >
                     <Minus size={16} strokeWidth={2.5} />
                   </button>
@@ -267,7 +267,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                     onClick={() => setQuantity((q) => Math.min(MAX_LINE_QUANTITY, q + 1))}
                     disabled={quantity >= MAX_LINE_QUANTITY}
                     aria-label="Increase quantity"
-                    className="w-10 h-10 rounded-full bg-brand text-on-brand flex items-center justify-center disabled:opacity-40 transition active:scale-90"
+                    className="w-9 h-9 rounded-btn bg-brand text-on-brand flex items-center justify-center disabled:opacity-40 transition active:scale-90"
                   >
                     <Plus size={16} strokeWidth={2.5} />
                   </button>
@@ -301,7 +301,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                 rows={2}
                 enterKeyHint="done"
                 placeholder="e.g. no onions, sauce on the side"
-                className="w-full rounded-2xl border border-line bg-soft/60 focus:bg-card px-3.5 py-2.5 text-sm placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none resize-none transition"
+                className="w-full rounded-control border border-line bg-soft/60 focus:bg-card px-3.5 py-2.5 text-sm placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none resize-none transition"
               />
               <span className="block text-[11px] text-muted mt-1">Allergies? Please also mention them in the order notes at checkout.</span>
             </label>

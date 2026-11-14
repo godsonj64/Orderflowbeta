@@ -194,15 +194,15 @@ export function ConfirmDialog({
       size="sm"
       surface={surface}
       footer={
-        <div className="flex gap-3">
-          <button type="button" onClick={onCancel} disabled={busy} className={`flex-1 py-3 rounded-btn font-semibold text-sm transition ${cancelCls}`}>
+        <div className="flex gap-2.5">
+          <button type="button" onClick={onCancel} disabled={busy} className={`flex-1 py-2.5 px-4 rounded-btn font-semibold text-sm transition ${cancelCls}`}>
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className={`flex-1 py-3 rounded-btn font-bold text-sm transition flex items-center justify-center gap-2 disabled:opacity-60 ${confirmCls}`}
+            className={`flex-1 py-2.5 px-4 rounded-btn font-bold text-sm transition flex items-center justify-center gap-2 disabled:opacity-60 ${confirmCls}`}
           >
             {busy && <Spinner size={18} />}
             {confirmLabel}
@@ -230,5 +230,5 @@ export function Field({ label, hint, children, className = '' }: { label: React.
 }
 
 export const adminInput =
-  'w-full border border-line bg-white rounded-btn px-3.5 py-2.5 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none transition disabled:bg-soft disabled:text-muted';
+  'w-full border border-line bg-white rounded-control px-3.5 py-2.5 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none transition disabled:bg-soft disabled:text-muted';
 

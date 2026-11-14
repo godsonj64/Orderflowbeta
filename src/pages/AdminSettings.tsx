@@ -325,19 +325,19 @@ export const AdminSettings: React.FC = () => {
         </div>
         <button
           onClick={() => setPreviewOpen(true)}
-          className="lg:hidden min-h-[40px] px-3.5 py-2 rounded-btn bg-white border border-line hover:bg-soft text-xs sm:text-sm font-bold text-ink flex items-center gap-1.5 shadow-2xs whitespace-nowrap shrink-0 transition"
+          className="lg:hidden min-h-[38px] px-3.5 py-1.5 rounded-btn bg-white border border-line hover:bg-soft text-xs sm:text-sm font-bold text-ink flex items-center gap-1.5 shadow-2xs whitespace-nowrap shrink-0 transition"
         >
           <Eye size={15} className="text-brand" /> Preview
         </button>
       </div>
 
       {/* Segmented settings tabs */}
-      <div className="grid grid-cols-5 sm:inline-flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl">
+      <div className="grid grid-cols-5 sm:inline-flex items-center gap-1 p-1 bg-white border border-line shadow-2xs rounded-btn">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`min-h-[36px] px-1.5 sm:px-3.5 py-1.5 rounded-btn text-[11px] sm:text-sm font-bold transition whitespace-nowrap text-center truncate ${
+            className={`min-h-[34px] px-1.5 sm:px-3.5 py-1.5 rounded-btn text-[11px] sm:text-sm font-bold transition whitespace-nowrap text-center truncate ${
               tab === t.id ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
             }`}
           >

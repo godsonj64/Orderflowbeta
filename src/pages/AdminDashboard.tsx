@@ -96,7 +96,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
       </header>
 
       {scheduled && (
-        <div className="text-xs sm:text-sm font-semibold text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-btn px-3 py-2">
+        <div className="text-xs sm:text-sm font-semibold text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-control px-3 py-2">
           Scheduled for {scheduled}
         </div>
       )}
@@ -106,7 +106,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           {order.customerPhone && (
             <a
               href={`tel:${order.customerPhone}`}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-soft hover:bg-gray-200/70 text-ink font-medium transition"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-btn bg-soft hover:bg-gray-200/70 text-ink font-medium transition"
             >
               <Phone size={13} className="text-brand" />
               <span className="tabular-nums">{order.customerPhone}</span>
@@ -117,7 +117,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.deliveryAddress)}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-soft hover:bg-gray-200/70 text-ink font-medium transition max-w-full"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-btn bg-soft hover:bg-gray-200/70 text-ink font-medium transition max-w-full"
             >
               <MapPin size={13} className="shrink-0 text-brand" />
               <span className="truncate">{order.deliveryAddress}</span>
@@ -127,7 +127,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
         </div>
       )}
 
-      <ul className="bg-soft/70 border border-line rounded-btn p-3 space-y-2">
+      <ul className="bg-soft/70 border border-line rounded-control p-3 space-y-2">
         {order.items.map((item, i) => (
           <li key={i} className="text-sm">
             <div className="flex justify-between gap-3">
@@ -146,7 +146,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
       </ul>
 
       {order.notes && (
-        <p className="text-xs sm:text-sm bg-red-50 border border-red-200 text-red-900 rounded-btn px-3 py-2 font-medium">
+        <p className="text-xs sm:text-sm bg-red-50 border border-red-200 text-red-900 rounded-control px-3 py-2 font-medium">
           Order note: {order.notes}
         </p>
       )}
@@ -165,7 +165,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
         {step && order.status !== 'payment_pending' && (
           <button
             onClick={() => onAdvance(order)}
-            className="w-full min-h-[44px] bg-brand hover:opacity-95 text-on-brand rounded-btn px-4 py-2.5 text-sm font-bold shadow-xs transition active:scale-[0.99]"
+            className="w-full min-h-[40px] bg-brand hover:opacity-95 text-on-brand rounded-btn px-4 py-2 text-sm font-bold shadow-xs transition active:scale-[0.99]"
           >
             {step.status === 'completed' && cashDue ? `Collect ${formatMoney(order.total)} & complete` : step.label}
           </button>
@@ -175,7 +175,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           {cashDue && step?.status !== 'completed' && (
             <button
               onClick={() => onCollectCash(order)}
-              className="min-h-[36px] bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap"
+              className="min-h-[34px] bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-btn px-3 py-1.5 text-xs font-bold transition whitespace-nowrap"
             >
               Mark paid (cash)
             </button>
@@ -183,7 +183,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           {order.paymentMethod === 'cash' && order.paymentStatus === 'paid' && order.status !== 'cancelled' && (
             <button
               onClick={() => onUndoCash(order)}
-              className="min-h-[36px] text-gray-600 hover:bg-gray-100 rounded-xl px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap"
+              className="min-h-[34px] text-gray-600 hover:bg-gray-100 rounded-btn px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap"
               title="Undo cash payment"
             >
               Undo paid
@@ -192,7 +192,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           {order.status === 'payment_pending' && (
             <button
               onClick={() => onCheckPayment(order)}
-              className="min-h-[36px] bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition whitespace-nowrap"
+              className="min-h-[34px] bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-btn px-3.5 py-1.5 text-xs font-semibold transition whitespace-nowrap"
             >
               Check payment
             </button>
@@ -200,7 +200,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           {canRefund && (
             <button
               onClick={() => onRefund(order)}
-              className="min-h-[36px] text-amber-800 hover:bg-amber-50 rounded-xl px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap"
+              className="min-h-[34px] text-amber-800 hover:bg-amber-50 rounded-btn px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap"
             >
               Refund
             </button>
@@ -208,7 +208,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
           {!['completed', 'cancelled'].includes(order.status) && (
             <button
               onClick={() => onCancel(order)}
-              className="min-h-[36px] text-red-600 hover:bg-red-50 rounded-xl px-3 py-1.5 text-xs font-semibold transition ml-auto whitespace-nowrap"
+              className="min-h-[34px] text-red-600 hover:bg-red-50 rounded-btn px-3 py-1.5 text-xs font-semibold transition ml-auto whitespace-nowrap"
             >
               Cancel order
             </button>
@@ -446,11 +446,11 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         {isManager && (
-          <div className="flex items-center p-1 bg-white border border-line shadow-2xs rounded-2xl self-start sm:self-stretch shrink-0">
+          <div className="flex items-center p-1 bg-white border border-line shadow-2xs rounded-btn self-start sm:self-stretch shrink-0">
             <button
               type="button"
               onClick={() => setViewMode('orders')}
-              className={`flex-1 sm:flex-initial px-4 py-2 rounded-btn text-xs sm:text-sm font-bold transition whitespace-nowrap ${
+              className={`flex-1 sm:flex-initial min-h-[34px] px-3.5 py-1.5 rounded-btn text-xs sm:text-sm font-bold transition whitespace-nowrap ${
                 viewMode === 'orders' ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
               }`}
             >
@@ -459,7 +459,7 @@ export const AdminDashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => setViewMode('insights')}
-              className={`flex-1 sm:flex-initial px-4 py-2 rounded-btn text-xs sm:text-sm font-bold transition whitespace-nowrap ${
+              className={`flex-1 sm:flex-initial min-h-[34px] px-3.5 py-1.5 rounded-btn text-xs sm:text-sm font-bold transition whitespace-nowrap ${
                 viewMode === 'insights' ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
               }`}
             >
@@ -482,12 +482,12 @@ export const AdminDashboard: React.FC = () => {
       ) : (
         <>
           <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
-            <div className="flex items-center gap-0.5 sm:gap-1 p-1 bg-white border border-line shadow-2xs rounded-2xl overflow-x-auto hide-scrollbar">
+            <div className="flex items-center gap-0.5 sm:gap-1 p-1 bg-white border border-line shadow-2xs rounded-btn overflow-x-auto hide-scrollbar">
               {filters.map((f) => (
                 <button
                   key={f.id}
                   onClick={() => setFilter(f.id)}
-                  className={`flex-1 sm:flex-initial shrink-0 min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-btn text-[11px] sm:text-sm font-bold transition whitespace-nowrap text-center ${
+                  className={`flex-1 sm:flex-initial shrink-0 min-h-[34px] px-2.5 sm:px-3.5 py-1.5 rounded-btn text-[11px] sm:text-sm font-bold transition whitespace-nowrap text-center ${
                     filter === f.id ? 'bg-brand text-on-brand shadow-xs' : 'text-muted hover:text-ink'
                   }`}
                 >

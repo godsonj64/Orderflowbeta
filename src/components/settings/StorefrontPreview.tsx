@@ -47,7 +47,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
         {/* Scrollable Storefront Body */}
         <div className="flex-1 overflow-y-auto hide-scrollbar p-3 space-y-3">
           {theme.showSearch && (
-            <div className="rounded-xl bg-soft/90 px-3 py-2 text-muted text-[11px] flex items-center gap-2">
+            <div className="rounded-btn bg-soft/90 px-3 py-2 text-muted text-[11px] flex items-center gap-2">
               <Search size={13} className="text-muted" />
               <span>Search on {profile.name || 'Kupa'}</span>
             </div>
@@ -56,7 +56,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
           {/* Header Image / Brand Banner */}
           {(theme.heroStyle === 'minimal' || showImageHero) &&
             (showImageHero ? (
-              <div className={`relative rounded-2xl overflow-hidden text-white flex items-end ${theme.heroHeight === 'tall' ? 'h-40' : 'h-28'}`}>
+              <div className={`relative rounded-card overflow-hidden text-white flex items-end ${theme.heroHeight === 'tall' ? 'h-40' : 'h-28'}`}>
                 <img src={profile.bannerUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" style={{ opacity: Math.max(0.18, theme.heroOverlay / 100 + 0.2) }} />
                 <div className="relative p-3">
@@ -65,7 +65,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
                 </div>
               </div>
             ) : (
-              <div className={`rounded-2xl bg-brand text-on-brand p-3.5 ${theme.heroHeight === 'tall' ? 'py-6' : ''}`}>
+              <div className={`rounded-card bg-brand text-on-brand p-3.5 ${theme.heroHeight === 'tall' ? 'py-6' : ''}`}>
                 <div className="font-display text-base font-extrabold leading-tight">{profile.name || 'Your restaurant'}</div>
                 <div className="text-[10px] opacity-85 line-clamp-1">{tagline}</div>
                 {theme.showRatings && (
@@ -77,7 +77,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
             ))}
 
           {/* Green Delivery to Home Card */}
-          <div className="rounded-2xl bg-brand text-on-brand p-3.5 shadow-sm">
+          <div className="rounded-card bg-brand text-on-brand p-3.5 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="font-display font-bold text-[12px]">Delivery to Home</span>
               <ChevronRight size={14} className="opacity-80" />
@@ -85,7 +85,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
             <div className="text-[10px] opacity-85 truncate mt-0.5">
               {profile.address || 'Utama Street no. 14, Rumbai'}
             </div>
-            <span className="inline-block mt-2 px-2 py-0.5 rounded-md bg-white/20 border border-white/25 text-on-brand text-[9px] font-bold">
+            <span className="inline-block mt-2 px-2 py-0.5 rounded-chip bg-white/20 border border-white/25 text-on-brand text-[9px] font-bold">
               ~20 min
             </span>
           </div>
@@ -93,7 +93,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
           {/* Special Offer Card (with optional background image, no sparkle icon) */}
           {theme.showPromoCard !== false && (
             <div
-              className={`relative overflow-hidden rounded-2xl p-3.5 flex items-center justify-between gap-2 ${
+              className={`relative overflow-hidden rounded-card p-3.5 flex items-center justify-between gap-2 ${
                 promoBgUrl ? 'text-white bg-neutral-900' : 'bg-accent text-ink'
               }`}
             >
@@ -118,7 +118,7 @@ export function StorefrontPreview({ profile, items }: { profile: RestaurantProfi
                 <div className={`text-[10px] mt-0.5 truncate ${promoBgUrl ? 'text-white/85' : 'text-muted'}`}>
                   {theme.promoSubtitle?.trim() || 'Discount 25%'}
                 </div>
-                <span className="inline-block mt-2 px-2.5 py-1 rounded-lg bg-brand text-on-brand text-[10px] font-bold">
+                <span className="inline-block mt-2 px-3 py-1 rounded-btn bg-brand text-on-brand text-[10px] font-bold">
                   Order Now
                 </span>
               </div>

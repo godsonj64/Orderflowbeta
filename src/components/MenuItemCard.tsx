@@ -73,9 +73,9 @@ function AddButton({ item, canAdd, onQuickAdd, onOpen, className = '' }: Omit<Ca
       }}
       disabled={disabled}
       aria-label={hasOptions ? `Choose options for ${item.name}` : `Add ${item.name} to cart`}
-      className={`w-9 h-9 shrink-0 rounded-full flex items-center justify-center shadow-sm transition active:scale-90 bg-brand text-on-brand disabled:opacity-40 disabled:shadow-none after:absolute after:-inset-2 after:content-[''] ${className}`}
+      className={`w-8 h-8 sm:w-9 sm:h-9 shrink-0 rounded-btn flex items-center justify-center shadow-sm transition active:scale-90 bg-brand text-on-brand disabled:opacity-40 disabled:shadow-none after:absolute after:-inset-2 after:content-[''] ${className}`}
     >
-      <Plus size={18} strokeWidth={2.5} />
+      <Plus size={17} strokeWidth={2.5} />
     </button>
   );
 }
@@ -96,7 +96,7 @@ function NameButton({ item, onOpen }: { item: MenuItem; onOpen: (item: MenuItem)
 }
 
 function SoldOutBadge() {
-  return <span className="inline-block text-[10px] font-bold uppercase tracking-wide bg-ink text-page px-2 py-0.5 rounded-md">Sold out</span>;
+  return <span className="inline-block text-[10px] font-bold uppercase tracking-wide bg-ink text-page px-2 py-0.5 rounded-chip">Sold out</span>;
 }
 
 function Placeholder({ name }: { name: string }) {
@@ -150,7 +150,7 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
         className={`flex items-center gap-3.5 p-3 rounded-card bg-card border border-line cursor-pointer hover:shadow-ios transition ${dim}`}
       >
         <div className="relative w-20 h-20 sm:w-24 sm:h-24 shrink-0">
-          <div className="w-full h-full rounded-2xl overflow-hidden bg-soft">
+          <div className="w-full h-full rounded-control overflow-hidden bg-soft">
             {showImage ? (
               <img
                 src={item.imageUrl}
@@ -186,13 +186,13 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
     );
   }
 
-  // Kupa Light Mode photo grid card: clean rounded-2xl photo container + bold title & brand-green price below
+  // Kupa Light Mode photo grid card: clean rounded-card photo container + bold title & brand-green price below
   return (
     <div
       onClick={() => onOpen(item)}
       className={`group flex flex-col cursor-pointer transition ${dim}`}
     >
-      <div className="relative aspect-square sm:aspect-[4/3] rounded-2xl bg-soft overflow-hidden">
+      <div className="relative aspect-square sm:aspect-[4/3] rounded-card bg-soft overflow-hidden">
         {showImage ? (
           <img
             src={item.imageUrl}

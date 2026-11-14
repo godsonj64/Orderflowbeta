@@ -36,7 +36,7 @@ function Hero({
 
   return (
     <section
-      className={`relative overflow-hidden rounded-2xl ${heightCls} flex items-end p-5 sm:p-7 shadow-ios ${
+      className={`relative overflow-hidden rounded-card ${heightCls} flex items-end p-5 sm:p-7 shadow-ios ${
         hasImage ? 'text-white bg-neutral-900' : 'bg-brand text-on-brand'
       }`}
     >
@@ -138,7 +138,7 @@ function DeliveryBanner({
     <button
       type="button"
       onClick={onSelect}
-      className="w-full text-left rounded-2xl bg-brand text-on-brand p-4 sm:p-5 shadow-ios transition hover:opacity-95 active:scale-[0.99]"
+      className="w-full text-left rounded-card bg-brand text-on-brand p-4 sm:p-5 shadow-ios transition hover:opacity-95 active:scale-[0.99]"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
@@ -157,7 +157,7 @@ function DeliveryBanner({
         {badgeParts.map((part, idx) => (
           <span
             key={idx}
-            className="inline-flex items-center px-2.5 py-1 rounded-lg bg-white/20 border border-white/25 text-[11px] sm:text-xs font-semibold tabular-nums backdrop-blur-xs"
+            className="inline-flex items-center px-2.5 py-1 rounded-chip bg-white/20 border border-white/25 text-[11px] sm:text-xs font-semibold tabular-nums backdrop-blur-xs"
           >
             {part}
           </span>
@@ -196,7 +196,7 @@ function PromoHighlightCard({
 
   return (
     <section
-      className={`relative overflow-hidden rounded-2xl p-4 sm:p-6 flex items-center justify-between gap-4 ${
+      className={`relative overflow-hidden rounded-card p-4 sm:p-6 flex items-center justify-between gap-4 ${
         hasBgImage ? 'text-white shadow-ios bg-neutral-900' : 'border border-brand/15 text-ink'
       }`}
       style={
@@ -248,7 +248,7 @@ function PromoHighlightCard({
           <button
             type="button"
             onClick={onOrderNow}
-            className="bg-brand text-on-brand rounded-xl px-4 py-2.5 text-xs sm:text-sm font-bold shadow-xs hover:opacity-90 active:scale-95 transition"
+            className="bg-brand text-on-brand rounded-btn px-4 py-2 text-xs sm:text-sm font-bold shadow-xs hover:opacity-90 active:scale-95 transition"
           >
             Order Now
           </button>
@@ -347,7 +347,7 @@ function StatusBanner({
   return (
     <div
       role="status"
-      className="flex items-stretch overflow-hidden rounded-xl bg-[#111315] text-white shadow-xl"
+      className="flex items-stretch overflow-hidden rounded-card bg-[#111315] text-white shadow-xl"
     >
       {/* Left Solid Crimson Metric Block */}
       <div className="w-24 sm:w-32 shrink-0 bg-[#D6281B] px-3 py-4 sm:py-5 flex flex-col items-center justify-center text-center select-none">
@@ -423,7 +423,7 @@ function Marquee({ profile }: { profile: RestaurantProfile }) {
     </div>
   );
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-brand text-on-brand h-11 sm:h-12 flex items-center" aria-label={text || 'Promotions'}>
+    <div className="relative overflow-hidden rounded-card bg-brand text-on-brand h-11 sm:h-12 flex items-center" aria-label={text || 'Promotions'}>
       <div
         className="flex items-center w-full h-full"
         style={{ WebkitMaskImage: 'linear-gradient(to right, transparent, black 10%, black 90%, transparent)', maskImage: 'linear-gradient(to right, transparent, black 10%, black 90%, transparent)' }}
@@ -446,7 +446,7 @@ function Spotlight({ profile, theme }: { profile: RestaurantProfile; theme: Reso
       {Array.from({ length: repeats }).flatMap((_, r) =>
         images.map((url, j) => (
           <div key={`${r}-${j}`} className="h-full w-[240px] sm:w-[380px] shrink-0 pr-3">
-            <img src={url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover rounded-2xl" />
+            <img src={url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover rounded-card" />
           </div>
         )),
       )}
@@ -650,7 +650,7 @@ export const Home: React.FC = () => {
             onChange={(e) => setSearch(e.target.value)}
             enterKeyHint="search"
             placeholder={`Search on ${profile.name}`}
-            className="w-full bg-soft border border-transparent focus:border-brand/30 focus:bg-card rounded-2xl pl-11 pr-10 py-3.5 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 outline-none transition"
+            className="w-full bg-soft border border-transparent focus:border-brand/30 focus:bg-card rounded-btn pl-11 pr-10 py-3 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 outline-none transition"
             aria-label="Search the menu"
           />
           {search && (
@@ -803,7 +803,7 @@ export const Home: React.FC = () => {
         <div className="md:hidden fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-30 px-4 pb-2.5 pointer-events-none">
           <Link
             to="/cart"
-            className="pointer-events-auto flex items-center justify-between gap-3 bg-brand text-on-brand rounded-2xl px-4 py-3.5 shadow-ios-lg font-bold text-sm"
+            className="pointer-events-auto flex items-center justify-between gap-3 bg-brand text-on-brand rounded-btn px-4 py-3 shadow-ios-lg font-bold text-sm"
           >
             <span className="flex items-center gap-2">
               <ShoppingCart size={18} />

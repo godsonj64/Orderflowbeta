@@ -55,12 +55,44 @@ import { DEFAULT_CATEGORIES, DEFAULT_ITEMS, DEFAULT_RESTAURANT_PROFILE } from '.
  * service-account key (the JSON, or base64 of the JSON) in FIREBASE_SERVICE_ACCOUNT.
  */
 function adminCredential(): admin.credential.Credential | undefined {
-  const raw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
-  if (!raw) return undefined;
+  const rawInput = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+  if (!rawInput) return undefined;
+  const unquoted =
+    (rawInput.startsWith('"') && rawInput.endsWith('"')) || (rawInput.startsWith("'") && rawInput.endsWith("'"))
+      ? rawInput.slice(1, -1).trim()
+      : rawInput;
+
+  const defaultClientEmail =
+    (process.env.FIREBASE_CLIENT_EMAIL || '').trim() ||
+    `firebase-adminsdk-fbsvc@${firebaseConfig.projectId}.iam.gserviceaccount.com`;
+
+  const tryPem = (candidate: string): admin.credential.Credential | undefined => {
+    const normalized = candidate.replace(/\\n/g, '\n').trim();
+    if (!normalized.includes('-----BEGIN') || !normalized.includes('PRIVATE KEY-----')) return undefined;
+    return admin.credential.cert({
+      projectId: firebaseConfig.projectId,
+      clientEmail: defaultClientEmail,
+      privateKey: normalized,
+    });
+  };
+
   try {
-    return admin.credential.cert(JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8')));
+    const directPem = tryPem(unquoted);
+    if (directPem) return directPem;
+
+    const decoded = unquoted.startsWith('{') ? unquoted : Buffer.from(unquoted, 'base64').toString('utf8').trim();
+    const decodedPem = tryPem(decoded);
+    if (decodedPem) return decodedPem;
+
+    const parsed = JSON.parse(decoded);
+    if (typeof parsed?.private_key === 'string') {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+    if (!parsed.project_id) parsed.project_id = firebaseConfig.projectId;
+    if (!parsed.client_email) parsed.client_email = defaultClientEmail;
+    return admin.credential.cert(parsed);
   } catch (err: any) {
-    console.error('[server] FIREBASE_SERVICE_ACCOUNT could not be read (expected the service-account JSON or its base64):', err?.message);
+    console.error('[server] FIREBASE_SERVICE_ACCOUNT could not be read (expected service-account JSON, PEM private key, or base64):', err?.message);
     return undefined;
   }
 }
@@ -81,11 +113,14 @@ const PENDING_PAYMENT_CHECK_AFTER_MS = 2 * 60_000;
 /** ... and cancelled (payment intent included) once they are this old. */
 const PENDING_PAYMENT_EXPIRE_AFTER_MS = 45 * 60_000;
 const PENDING_PAYMENT_SWEEP_EVERY_MS = 3 * 60_000;
-/** Mirrors the bootstrap admin in firestore.rules. Override with ADMIN_EMAILS="a@x.com,b@y.com". */
-const BOOTSTRAP_ADMINS = (process.env.ADMIN_EMAILS || 'godsonj64@gmail.com,godsonchristy25@gmail.com')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
+/** Mirrors the bootstrap admin in firestore.rules, plus any extra emails in ADMIN_EMAILS. */
+const BOOTSTRAP_ADMINS = Array.from(
+  new Set(
+    ['godsonj64@gmail.com', 'godsonchristy25@gmail.com', ...(process.env.ADMIN_EMAILS || '').split(',')]
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  ),
+);
 
 class HttpError extends Error {
   constructor(
