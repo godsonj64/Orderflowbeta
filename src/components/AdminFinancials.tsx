@@ -34,6 +34,7 @@ import {
 } from '../lib/pdf';
 import { reportError } from '../utils/errorHandling';
 import { ReceiptModal } from './ReceiptModal';
+import { StatusBanner } from './StatusBanner';
 import { Sheet, Spinner, adminInput } from './ui';
 
 type Range = 'today' | 'yesterday' | '7d' | '30d' | 'custom';
@@ -366,23 +367,59 @@ export const AdminFinancials: React.FC<{ orders: Order[] }> = ({ orders }) => {
     label,
     value,
     hint,
-    tone = '',
-    accent = false,
+    swatch,
   }: {
     label: string;
     value: string;
     hint?: string;
-    tone?: string;
-    accent?: boolean;
-  }) => (
-    <div className={`rounded-card border shadow-ios-sm p-3.5 sm:p-4 ${tone || 'bg-white border-line'}`}>
-      <p className="text-xs font-medium text-muted">{label}</p>
-      <p className={`text-lg sm:text-2xl font-display font-extrabold tabular-nums mt-0.5 ${accent ? 'text-brand' : 'text-ink'}`}>
-        {value}
-      </p>
-      {hint && <p className="text-[11px] text-muted mt-0.5 tabular-nums">{hint}</p>}
-    </div>
-  );
+    swatch?: 'iron' | 'aqua' | 'heat' | 'cream';
+  }) => {
+    const swatchStyles =
+      swatch === 'iron'
+        ? {
+            card: 'bg-[#222A2A] border-[#222A2A] text-white shadow-md',
+            label: 'text-[#F39120] font-extrabold uppercase tracking-[0.14em] text-[10px]',
+            val: 'text-white',
+            hint: 'text-neutral-300',
+          }
+        : swatch === 'aqua'
+          ? {
+              card: 'bg-[#4FBBBC] border-[#4FBBBC] text-[#111315] shadow-md',
+              label: 'text-[#111315] font-extrabold uppercase tracking-[0.14em] text-[10px]',
+              val: 'text-[#111315]',
+              hint: 'text-[#111315]/80 font-medium',
+            }
+          : swatch === 'heat'
+            ? {
+                card: 'bg-[#F39120] border-[#F39120] text-[#111315] shadow-md',
+                label: 'text-[#111315] font-extrabold uppercase tracking-[0.14em] text-[10px]',
+                val: 'text-[#111315]',
+                hint: 'text-[#111315]/80 font-medium',
+              }
+            : swatch === 'cream'
+              ? {
+                  card: 'bg-[#EFECE1] border-[#DDD6C0] text-[#181E1E] shadow-sm',
+                  label: 'text-[#EC4624] font-extrabold uppercase tracking-[0.14em] text-[10px]',
+                  val: 'text-[#181E1E]',
+                  hint: 'text-[#222A2A]/80 font-medium',
+                }
+              : {
+                  card: 'bg-white border-line shadow-ios-sm',
+                  label: 'text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted',
+                  val: 'text-ink',
+                  hint: 'text-muted',
+                };
+
+    return (
+      <div className={`rounded-card border p-3.5 sm:p-4 ${swatchStyles.card}`}>
+        <p className={swatchStyles.label}>{label}</p>
+        <p className={`text-lg sm:text-2xl font-display font-black tabular-nums mt-1 ${swatchStyles.val}`}>
+          {value}
+        </p>
+        {hint && <p className={`text-[11px] mt-1 tabular-nums ${swatchStyles.hint}`}>{hint}</p>}
+      </div>
+    );
+  };
 
   const subTabs: { id: BreakdownTab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
     { id: 'overview', label: 'Overview & Revenue', icon: TrendingUp },
@@ -419,9 +456,9 @@ export const AdminFinancials: React.FC<{ orders: Order[] }> = ({ orders }) => {
               }
               setReportModalOpen(true);
             }}
-            className="min-h-[36px] flex items-center gap-1.5 px-3.5 py-1.5 rounded-btn text-xs font-bold bg-brand hover:opacity-95 text-on-brand shadow-xs whitespace-nowrap transition"
+            className="min-h-[36px] flex items-center gap-1.5 px-3.5 py-1.5 rounded-btn text-xs font-extrabold bg-[#111315] hover:opacity-95 text-white shadow-xs whitespace-nowrap transition"
           >
-            <SlidersHorizontal size={14} />
+            <SlidersHorizontal size={14} className="text-[#F39120]" />
             <span>Custom PDF Report</span>
           </button>
 
@@ -469,29 +506,31 @@ export const AdminFinancials: React.FC<{ orders: Order[] }> = ({ orders }) => {
         </div>
       )}
 
-      {/* Executive KPI Summary Grid */}
+      {/* Executive KPI Summary Grid (Solid Swatch Cards on top row) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         <Stat
           label="Net collected sales"
           value={formatMoney(analytics.netSales)}
           hint={`${analytics.salesCount} sales · avg ${formatMoney(analytics.avgOrderValue)}`}
-          accent
+          swatch="iron"
         />
         <Stat
           label="Gross billed total"
           value={formatMoney(analytics.grossTotal)}
           hint={`Food subtotal ${formatMoney(analytics.grossSubtotal)}`}
+          swatch="aqua"
         />
         <Stat
           label="Card collected"
           value={formatMoney(analytics.cardCollected)}
           hint={`${analytics.paymentBreakdown[0]?.orders || 0} card orders`}
+          swatch="cream"
         />
         <Stat
           label="Cash collected"
           value={formatMoney(analytics.cashCollected)}
           hint={analytics.cashDue > 0 ? `${formatMoney(analytics.cashDue)} still due` : 'All cash settled'}
-          tone={analytics.cashDue > 0 ? 'bg-amber-50 border-amber-200' : ''}
+          swatch={analytics.cashDue > 0 ? 'heat' : 'cream'}
         />
         <Stat
           label="Total tips"
@@ -1144,16 +1183,16 @@ export const AdminFinancials: React.FC<{ orders: Order[] }> = ({ orders }) => {
       >
         <div className="p-5 space-y-4 text-sm">
           {/* Live Report Scope Banner */}
-          <div className="rounded-card bg-emerald-50/80 border border-emerald-200 p-3.5 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">Report Scope</p>
-              <p className="text-xs text-emerald-950 mt-0.5">{periodDescription}</p>
-            </div>
-            <div className="text-right font-mono tabular-nums">
-              <p className="text-xs text-emerald-800">{customReportAnalytics.salesCount} valid sales</p>
-              <p className="text-base font-extrabold text-emerald-950">{formatMoney(customReportAnalytics.netSales)}</p>
-            </div>
-          </div>
+          <StatusBanner
+            tone="iron"
+            pattern="waves"
+            compact
+            metric={formatMoney(customReportAnalytics.netSales)}
+            metricLabel={`${customReportAnalytics.salesCount} SALES`}
+            kicker="LIVE REPORT SCOPE"
+            title={periodDescription}
+            subtitle={`Includes ${customReportAnalytics.salesCount} valid sales (${formatMoney(customReportAnalytics.grossTotal)} gross billed)`}
+          />
 
           <div className="space-y-1.5">
             <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">

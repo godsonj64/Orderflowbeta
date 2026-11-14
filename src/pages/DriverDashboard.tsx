@@ -19,6 +19,7 @@ import { ordersFromSnapshot } from '../lib/orderList';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { friendlyError, reportError } from '../utils/errorHandling';
 import { ReceiptModal } from '../components/ReceiptModal';
+import { StatusBanner } from '../components/StatusBanner';
 import { Sheet, Spinner } from '../components/ui';
 
 const OrderTrackingMap = lazy(() =>
@@ -339,63 +340,54 @@ export const DriverDashboard: React.FC = () => {
           <p className="text-xs sm:text-sm text-muted mt-0.5">Accept a delivery, share live GPS, and confirm drop-off.</p>
         </div>
         {cashToCollect > 0 && (
-          <div className="text-right rounded-btn bg-amber-50 border border-amber-200 px-3 py-2 shrink-0">
-            <p className="text-[11px] font-semibold text-amber-800">Cash to collect</p>
-            <p className="font-extrabold font-mono tabular-nums text-amber-900">{formatMoney(cashToCollect)}</p>
+          <div className="flex items-stretch overflow-hidden rounded-btn bg-[#111315] text-white shrink-0 shadow-sm">
+            <span className="bg-[#F39120] text-[#111315] px-2.5 py-2 text-[10px] font-black uppercase tracking-wider flex items-center">
+              CASH DUE
+            </span>
+            <span className="px-3 py-2 font-extrabold font-mono tabular-nums text-sm text-white flex items-center">
+              {formatMoney(cashToCollect)}
+            </span>
           </div>
         )}
       </div>
 
       {/* Live GPS broadcaster strip whenever the driver has active deliveries */}
       {mine.length > 0 && (
-        <div
-          className={`rounded-card border shadow-ios-sm p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 transition ${
-            sharingGps ? 'bg-brand text-on-brand border-brand' : 'bg-white text-ink border-line'
-          }`}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className={`w-9 h-9 rounded-btn flex items-center justify-center shrink-0 ${
-                sharingGps ? 'bg-white/20 text-on-brand' : 'bg-accent text-brand'
-              }`}
-            >
-              <Radio size={18} className={sharingGps ? 'animate-pulse' : ''} />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-bold flex items-center gap-2">
-                {sharingGps ? 'Live GPS sharing is ON' : 'Share your live GPS with customers'}
-              </p>
-              <p className={`text-xs truncate ${sharingGps ? 'opacity-85' : 'text-muted'}`}>
-                {gpsError
-                  ? gpsError
-                  : driverPos
-                    ? `Coordinates ${driverPos.lat.toFixed(4)}, ${driverPos.lng.toFixed(4)}${driverPos.accuracy ? ` · ±${Math.round(driverPos.accuracy)}m` : ''}`
-                    : 'Broadcasts your position onto the customer’s live OpenStreetMap tracker.'}
-              </p>
+        <StatusBanner
+          tone={sharingGps ? 'emerald' : 'aqua'}
+          pattern="contours"
+          compact
+          metric={sharingGps ? 'LIVE' : 'GPS'}
+          metricLabel={sharingGps ? 'BROADCASTING' : 'STANDBY'}
+          title={sharingGps ? 'Live GPS sharing is ON' : 'Share your live GPS with customers'}
+          subtitle={
+            gpsError
+              ? gpsError
+              : driverPos
+                ? `Coordinates ${driverPos.lat.toFixed(4)}, ${driverPos.lng.toFixed(4)}${driverPos.accuracy ? ` · ±${Math.round(driverPos.accuracy)}m` : ''}`
+                : 'Broadcasts your position onto the customer’s live OpenStreetMap tracker.'
+          }
+          action={
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={pingGpsNow}
+                className="min-h-[38px] px-3 py-1.5 rounded-btn bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center gap-1.5 transition whitespace-nowrap"
+              >
+                <LocateFixed size={14} /> Ping now
+              </button>
+              <button
+                type="button"
+                onClick={sharingGps ? stopGpsSharing : startGpsSharing}
+                className={`min-h-[38px] px-3.5 py-1.5 rounded-btn text-xs font-extrabold transition whitespace-nowrap ${
+                  sharingGps ? 'bg-[#EC4624] text-white hover:opacity-95' : 'bg-[#4FBBBC] text-[#111315] hover:opacity-95'
+                }`}
+              >
+                {sharingGps ? 'Pause GPS' : 'Start live GPS'}
+              </button>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={pingGpsNow}
-              className={`min-h-[38px] px-3 py-1.5 rounded-btn text-xs font-semibold flex items-center gap-1.5 transition ${
-                sharingGps ? 'bg-white/15 hover:bg-white/25 text-on-brand' : 'bg-soft hover:bg-gray-200/70 text-ink'
-              }`}
-            >
-              <LocateFixed size={14} /> Ping now
-            </button>
-            <button
-              type="button"
-              onClick={sharingGps ? stopGpsSharing : startGpsSharing}
-              className={`min-h-[38px] px-3.5 py-1.5 rounded-btn text-xs font-bold transition ${
-                sharingGps ? 'bg-red-500/90 hover:bg-red-500 text-white' : 'bg-brand hover:opacity-95 text-on-brand'
-              }`}
-            >
-              {sharingGps ? 'Pause GPS' : 'Start live GPS'}
-            </button>
-          </div>
-        </div>
+          }
+        />
       )}
 
       {mine.length > 0 && (

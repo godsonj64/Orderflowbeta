@@ -1,6 +1,5 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Link, Route, Routes, useLocation } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { StoreProvider } from './context/StoreContext';
 import { CartProvider } from './context/CartContext';
@@ -9,6 +8,7 @@ import { AdminLayout } from './components/AdminLayout';
 import { RequireRole } from './components/RequireRole';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CookieConsent } from './components/CookieConsent';
+import { SolidToaster } from './components/StatusBanner';
 import { PageSpinner } from './components/ui';
 import { Home } from './pages/Home';
 import { MANAGER_ROLES, STAFF_ROLES, type UserRole } from './types';
@@ -128,11 +128,7 @@ export default function App() {
           <CartProvider>
             <Router>
               <ScrollToTop />
-              <Toaster
-                position="top-center"
-                containerStyle={{ top: 'max(12px, env(safe-area-inset-top))' }}
-                toastOptions={{ duration: 4000, style: { borderRadius: '16px', background: '#1f2420', color: '#fff', fontSize: '14px' } }}
-              />
+              <SolidToaster />
               <Routes>
                 <Route path="/" element={<Layout />}>
                   <Route index element={<Home />} />

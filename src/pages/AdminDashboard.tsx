@@ -154,9 +154,12 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
       </ul>
 
       {order.notes && (
-        <p className="text-xs sm:text-sm bg-red-50 border border-red-200 text-red-900 rounded-control px-3 py-2 font-medium">
-          Order note: {order.notes}
-        </p>
+        <div className="flex items-stretch overflow-hidden rounded-control bg-[#111315] text-white text-xs sm:text-sm">
+          <span className="shrink-0 bg-[#EC4624] text-white px-2.5 py-1.5 font-black text-[10px] uppercase tracking-wider flex items-center">
+            NOTE
+          </span>
+          <span className="px-3 py-1.5 font-semibold text-white">{order.notes}</span>
+        </div>
       )}
 
       {order.cancelReason && order.status === 'cancelled' && (

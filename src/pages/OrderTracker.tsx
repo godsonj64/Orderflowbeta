@@ -38,6 +38,7 @@ import { watchProofPhoto } from '../lib/proof';
 import { friendlyError } from '../utils/errorHandling';
 import { ConfirmDialog, PageSpinner, Spinner } from '../components/ui';
 import { ReceiptModal } from '../components/ReceiptModal';
+import { StatusBanner } from '../components/StatusBanner';
 import { downloadOrderReceiptPdf } from '../lib/pdf';
 import { receiptFilename } from '../lib/analytics';
 import { useStorefrontUI } from '../components/Layout';
@@ -343,9 +344,15 @@ export const OrderTracker: React.FC = () => {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       {(location.state as { placed?: boolean } | null)?.placed && !cancelled && (
-        <div className="rounded-card bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 text-sm font-semibold">
-          Thanks{order.customerName ? `, ${order.customerName.split(' ')[0]}` : ''}! Your order was sent to the kitchen.
-        </div>
+        <StatusBanner
+          tone="emerald"
+          pattern="waves"
+          metric={`#${orderCode(order)}`}
+          metricLabel="SENT TO KITCHEN"
+          kicker="ORDER CONFIRMED & QUEUED"
+          title={`Thanks${order.customerName ? `, ${order.customerName.split(' ')[0]}` : ''}! Your order was sent to the kitchen.`}
+          subtitle="Our kitchen team has your ticket on the board and is preparing your order."
+        />
       )}
 
       <section className="bg-card rounded-card border border-line p-5 sm:p-7">
@@ -366,22 +373,49 @@ export const OrderTracker: React.FC = () => {
         </div>
 
         {pendingPayment && !checkingPayment && (
-          <div className="mt-5 rounded-card bg-amber-50 border border-amber-200 p-4 text-sm text-amber-900">
-            We haven't received payment for this order, so it hasn't been sent to the kitchen.{' '}
-            <Link to="/cart" className="font-bold underline">
-              Return to checkout
-            </Link>
+          <div className="mt-5">
+            <StatusBanner
+              tone="heat"
+              pattern="slashes"
+              compact
+              metric="HOLD"
+              metricLabel="PAYMENT DUE"
+              title="We haven't received payment for this order yet."
+              subtitle="Your ticket will be sent to the kitchen as soon as checkout is completed."
+              action={
+                <Link
+                  to="/cart"
+                  className="inline-flex items-center px-3.5 py-2 rounded-btn bg-[#F39120] text-[#111315] text-xs font-extrabold uppercase tracking-wider hover:opacity-95 transition whitespace-nowrap"
+                >
+                  Return to checkout
+                </Link>
+              }
+            />
           </div>
         )}
 
         {cancelled ? (
-          <div className="mt-6 flex items-start gap-3 rounded-card bg-red-50 border border-red-100 text-red-800 p-4">
-            <XCircle className="shrink-0" size={22} />
-            <div className="text-sm">
-              <p className="font-bold">This order was cancelled.</p>
-              {order.paymentStatus === 'refunded' && <p>A refund of {formatMoney(order.refundAmount ?? order.total)} was issued to your card. It can take 5–10 days to appear.</p>}
-              {order.cancelReason && order.cancelledBy === 'staff' && <p>Reason: {order.cancelReason}</p>}
-            </div>
+          <div className="mt-6">
+            <StatusBanner
+              tone="rust"
+              pattern="slashes"
+              role="alert"
+              metric="VOID"
+              metricLabel="CANCELLED"
+              title="This order was cancelled."
+              subtitle={
+                <>
+                  {order.paymentStatus === 'refunded' && (
+                    <span className="block">
+                      A refund of {formatMoney(order.refundAmount ?? order.total)} was issued to your card (5–10 business days).
+                    </span>
+                  )}
+                  {order.cancelReason && order.cancelledBy === 'staff' && (
+                    <span className="block">Reason: {order.cancelReason}</span>
+                  )}
+                </>
+              }
+            />
           </div>
         ) : (
           !pendingPayment && (
@@ -410,26 +444,22 @@ export const OrderTracker: React.FC = () => {
         )}
 
         {isDelivery && order.driverName && !cancelled && order.status !== 'completed' && (
-          <div className="mt-6 flex items-center justify-between gap-3 rounded-card bg-soft p-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <Truck className="text-brand shrink-0" size={22} />
-              <div className="text-sm min-w-0">
-                <p className="font-bold truncate">{order.driverName} is your driver</p>
-                <p className="text-muted text-xs sm:text-sm">
-                  {driverPoint
-                    ? 'Sharing real-time GPS location on the map below.'
-                    : order.deliveryStatus === 'picked_up'
-                      ? 'Heading your way now.'
-                      : 'Heading to the restaurant to pick up your order.'}
-                </p>
-              </div>
-            </div>
-            {driverPoint && (
-              <span className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-700 text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                Live GPS
-              </span>
-            )}
+          <div className="mt-6">
+            <StatusBanner
+              tone="aqua"
+              pattern="contours"
+              compact
+              metric={driverPoint ? 'LIVE' : 'DRIVER'}
+              metricLabel={driverPoint ? 'GPS ACTIVE' : 'ASSIGNED'}
+              title={`${order.driverName} is your delivery driver`}
+              subtitle={
+                driverPoint
+                  ? 'Sharing real-time GPS coordinates on the live map below.'
+                  : order.deliveryStatus === 'picked_up'
+                    ? 'Picked up your order and heading your way now.'
+                    : 'Heading to the restaurant to pick up your order.'
+              }
+            />
           </div>
         )}
 

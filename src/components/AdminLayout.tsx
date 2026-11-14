@@ -20,6 +20,7 @@ import { useStore } from '../context/StoreContext';
 import { useNewOrderAlerts } from '../hooks/useNewOrderAlerts';
 import { brandThemeStyle, ensureFontLoaded } from '../lib/theme';
 import { LoadingSplash } from './LoadingSplash';
+import { StatusBanner } from './StatusBanner';
 import { Sheet } from './ui';
 import { api } from '../lib/api';
 
@@ -240,17 +241,18 @@ export const AdminLayout: React.FC = () => {
       </header>
 
       {banners.length > 0 && (
-        <div className="max-w-7xl w-full mx-auto px-3 sm:px-6 pt-3 space-y-2">
+        <div className="max-w-7xl w-full mx-auto px-3 sm:px-6 pt-3 space-y-2.5">
           {banners.map((b, i) => (
-            <div
+            <StatusBanner
               key={i}
-              className={`flex items-start gap-2.5 rounded-card border px-3.5 py-2.5 text-xs sm:text-sm ${
-                b.tone === 'red' ? 'bg-red-50 border-red-200 text-red-800' : 'bg-amber-50 border-amber-200 text-amber-900'
-              }`}
-            >
-              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-              <div className="leading-snug">{b.text}</div>
-            </div>
+              tone={b.tone === 'red' ? 'rust' : 'heat'}
+              pattern={b.tone === 'red' ? 'slashes' : 'checker'}
+              compact
+              metric={b.tone === 'red' ? 'BASIC' : 'SETUP'}
+              metricLabel={b.tone === 'red' ? 'LIMITED DB' : 'CONFIG'}
+              title={b.tone === 'red' ? 'Server database credentials not connected' : 'Store configuration notice'}
+              subtitle={b.text}
+            />
           ))}
         </div>
       )}

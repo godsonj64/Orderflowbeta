@@ -2,27 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Order, RestaurantProfile } from '../types';
 import { computeDetailedAnalytics } from './analytics';
-import { generateOrderReceiptPdf, generateSalesReportPdf } from './pdf';
+import {
+  estimateTextWidth,
+  fitPdfFontSize,
+  generateOrderReceiptPdf,
+  generateSalesReportPdf,
+} from './pdf';
 
 const SAMPLE_PROFILE: RestaurantProfile = {
   name: 'Huddle Snack Stop',
   isAcceptingOrders: true,
-  address: '100 Main St, Austin, TX',
-  phone: '512-555-0199',
-  email: 'hello@huddlesnackstop.com',
+  address: '408 Congress Ave, Austin, TX 78701',
+  phone: '(512) 555-0194',
+  email: 'orders@huddlesnackstop.com',
 };
 
 const SAMPLE_ORDER: Order = {
-  id: 'order-abc-123',
-  orderNumber: '2048',
+  id: 'ug6yny-abc-123',
+  orderNumber: 'UG6YNY',
   customerId: 'cust-1',
   customerName: 'Jordan Lee',
   customerPhone: '512-555-0144',
   deliveryAddress: '742 Evergreen Terrace, Apt 4B',
   type: 'delivery',
-  status: 'out_for_delivery',
+  status: 'completed',
   paymentMethod: 'cash',
-  paymentStatus: 'pending',
+  paymentStatus: 'paid',
   subtotal: 24.0,
   deliveryFee: 3.5,
   tax: 2.0,
@@ -48,7 +53,19 @@ function bytesToAscii(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('latin1');
 }
 
-test('generateOrderReceiptPdf generates valid PDF 1.4 documents for customer, driver, and kitchen', () => {
+test('fitPdfFontSize scales down long uppercase codes like ORDER #UG6YNY to fit inside left header block', () => {
+  const maxWidth = 100; // leftBlockW (118) - 18pt horizontal padding
+  const fittedSize = fitPdfFontSize('ORDER #UG6YNY', maxWidth, 14.5, 8, 'F4');
+  assert.ok(fittedSize < 14.5, 'Expected font size to scale down below 14.5pt for 13-char uppercase code');
+  assert.ok(fittedSize >= 8, 'Expected font size to stay above minSize 8pt');
+  const renderedWidth = estimateTextWidth('ORDER #UG6YNY', fittedSize, 'F4');
+  assert.ok(
+    renderedWidth <= maxWidth + 0.5,
+    `Expected rendered width (${renderedWidth}) to fit within maxWidth (${maxWidth})`,
+  );
+});
+
+test('generateOrderReceiptPdf preserves full contact email and avoids duplicate CASH (CASH) payment label', () => {
   for (const variant of ['customer', 'driver', 'kitchen', 'staff'] as const) {
     const pdfBytes = generateOrderReceiptPdf(SAMPLE_ORDER, SAMPLE_PROFILE, { variant });
     assert.ok(pdfBytes instanceof Uint8Array);
@@ -59,7 +76,10 @@ test('generateOrderReceiptPdf generates valid PDF 1.4 documents for customer, dr
     assert.ok(text.includes('xref'), 'Must contain xref table');
     assert.ok(text.trimEnd().endsWith('%%EOF'), 'Must end with %%EOF');
     assert.ok(text.includes('Huddle Snack Stop'), 'Must include restaurant name');
-    assert.ok(text.includes('ORDER #2048'), 'Must include order code');
+    assert.ok(text.includes('ORDER #UG6YNY'), 'Must include 6-character order code');
+    assert.ok(text.includes('orders@huddlesnackstop.com'), 'Must preserve full email address without chopping');
+    assert.ok(!text.includes('CASH (CASH)'), 'Must not duplicate payment method as CASH (CASH)');
+    assert.ok(text.includes('PAID - CASH - DO NOT COLLECT CASH'), 'Must include clean payment status banner text');
     assert.ok(text.includes('Crispy Chicken Sandwich'), 'Must include line item');
   }
 });

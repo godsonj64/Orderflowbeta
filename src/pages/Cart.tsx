@@ -797,9 +797,14 @@ export const Cart: React.FC = () => {
               />
 
               {orderType === 'delivery' && totals.freeDeliveryRemaining !== null && totals.freeDeliveryRemaining > 0 && (
-                <p className="text-xs font-semibold text-brand bg-brand/10 rounded-xl px-3.5 py-2.5">
-                  Add {formatMoney(totals.freeDeliveryRemaining)} more for free delivery.
-                </p>
+                <div className="flex items-stretch overflow-hidden rounded-control bg-[#111315] text-white">
+                  <div className="w-20 shrink-0 bg-[#4FBBBC] text-[#111315] px-2.5 py-2 flex flex-col items-center justify-center text-center">
+                    <span className="text-[10px] font-black uppercase tracking-[0.15em]">FREE DEL</span>
+                  </div>
+                  <p className="flex-1 px-3.5 py-2.5 text-xs font-bold text-white flex items-center">
+                    Add {formatMoney(totals.freeDeliveryRemaining)} more to unlock free delivery.
+                  </p>
+                </div>
               )}
 
               {status.canSchedule && (
@@ -971,9 +976,14 @@ export const Cart: React.FC = () => {
               )}
 
               {paymentMethod === 'cash' && (
-                <p className="text-xs text-muted bg-soft rounded-xl px-3.5 py-2.5">
-                  Please have {formatMoney(totals.total)} ready. You can tip in person.
-                </p>
+                <div className="flex items-stretch overflow-hidden rounded-control bg-[#111315] text-white">
+                  <div className="w-20 shrink-0 bg-[#F39120] text-[#111315] px-2.5 py-2 flex flex-col items-center justify-center text-center">
+                    <span className="text-[10px] font-black uppercase tracking-[0.15em]">CASH</span>
+                  </div>
+                  <p className="flex-1 px-3.5 py-2.5 text-xs font-semibold text-neutral-200 flex items-center">
+                    Please have {formatMoney(totals.total)} ready upon hand-off. You can also tip in person.
+                  </p>
+                </div>
               )}
 
               {tippingEnabled && (
@@ -986,18 +996,32 @@ export const Cart: React.FC = () => {
               {/* Promo */}
               <div className="pt-1">
                 {promoCode ? (
-                  <div className={`flex items-start justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${promoProblem ? 'border-amber-300 bg-amber-50' : 'border-brand/30 bg-brand/5'}`}>
-                    <div className="text-sm">
-                      <div className="font-bold flex items-center gap-1.5 text-ink">
-                        <Tag size={14} className="text-brand" /> {promoCode}
-                      </div>
-                      <div className={promoProblem ? 'text-amber-800 text-xs' : 'text-brand font-semibold text-xs'}>
-                        {!userProfile ? 'Sign in to use this code.' : !promoLoaded ? 'Checking…' : promoProblem || `You save ${formatMoney(fromCents(discountCents))}`}
-                      </div>
+                  <div className="flex items-stretch overflow-hidden rounded-control bg-[#111315] text-white">
+                    <div
+                      className={`w-20 shrink-0 px-2.5 py-2.5 flex flex-col items-center justify-center text-center ${
+                        promoProblem ? 'bg-[#F39120] text-[#111315]' : 'bg-[#16A34A] text-white'
+                      }`}
+                    >
+                      <Tag size={14} strokeWidth={2.5} />
+                      <span className="mt-1 text-[9px] font-black uppercase tracking-[0.15em] leading-none">
+                        {promoProblem ? 'CHECK' : 'PROMO'}
+                      </span>
                     </div>
-                    <button onClick={() => setPromoCode(null)} className="-m-1.5 p-2.5 text-muted hover:text-ink" aria-label="Remove promo code">
-                      <X size={16} />
-                    </button>
+                    <div className="flex-1 px-3.5 py-2.5 flex items-center justify-between gap-3">
+                      <div className="text-xs sm:text-sm min-w-0">
+                        <div className="font-extrabold text-white tracking-wider">{promoCode}</div>
+                        <div className={promoProblem ? 'text-[#F39120] text-xs font-semibold' : 'text-[#4ADE80] font-bold text-xs'}>
+                          {!userProfile ? 'Sign in to use this code.' : !promoLoaded ? 'Checking…' : promoProblem || `You save ${formatMoney(fromCents(discountCents))}`}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setPromoCode(null)}
+                        className="shrink-0 w-7 h-7 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 flex items-center justify-center transition"
+                        aria-label="Remove promo code"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
                   </div>
                 ) : !promosAvailable ? null : (
                   <form

@@ -41,7 +41,7 @@ const DEFAULT_REPORT_SECTIONS: SalesReportSections = {
   orderLedger: true,
 };
 
-type FontKey = 'F1' | 'F2' | 'F3' | 'F4'; // F1: Helvetica, F2: Helvetica-Bold, F3: Courier, F4: Courier-Bold
+type FontKey = 'F1' | 'F2' | 'F3' | 'F4'; // Standard Type1 sans-serif (Helvetica / Helvetica-Bold)
 type Rgb = [number, number, number]; // 0..1
 
 /**
@@ -55,7 +55,7 @@ export function sanitizePdfText(raw: unknown): string {
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
     .replace(/[\u2013\u2014\u2212]/g, '-')
     .replace(/\u2026/g, '...')
-    .replace(/\u00B7|\u2022/g, ' - ')
+    .replace(/\s*(?:\u00B7|\u2022)\s*/g, ' - ')
     .replace(/\u00D7/g, 'x')
     .replace(/[^\x20-\x7E\xA0-\xFF]/g, '');
   return str;
@@ -68,20 +68,58 @@ function escapePdfLiteral(text: string): string {
     .replace(/\)/g, '\\)');
 }
 
-/** Approximate width of a string in points for standard sans-serif fonts. */
-function estimateTextWidth(text: string, fontSize: number, font: FontKey = 'F1'): number {
+/**
+ * Conservative width estimation in points for Helvetica / Helvetica-Bold so wide
+ * uppercase strings (like `ORDER #UG6YNY`) never overflow their solid container blocks.
+ */
+export function estimateTextWidth(text: string, fontSize: number, font: FontKey = 'F1'): number {
   const clean = sanitizePdfText(text);
   let units = 0;
   for (let i = 0; i < clean.length; i++) {
     const ch = clean[i];
-    if ('ilI.,:;!| '.includes(ch)) units += 0.28;
-    else if ('mwMW@%'.includes(ch)) units += 0.78;
-    else if (ch >= 'A' && ch <= 'Z') units += 0.66;
-    else if (ch >= '0' && ch <= '9') units += 0.56;
-    else units += 0.53;
+    if ('ilI.,:;!| '.includes(ch)) units += 0.3;
+    else if ('mwMW@%'.includes(ch)) units += 0.84;
+    else if (ch >= 'A' && ch <= 'Z') units += 0.72;
+    else if ((ch >= '0' && ch <= '9') || '#$+-=/'.includes(ch)) units += 0.62;
+    else units += 0.56;
   }
-  const boldFactor = font === 'F2' || font === 'F4' ? 1.05 : 1.0;
+  const boldFactor = font === 'F2' || font === 'F4' ? 1.08 : 1.0;
   return units * fontSize * boldFactor;
+}
+
+/**
+ * Computes a scaled font size so `text` fits comfortably within `maxWidth` points.
+ */
+export function fitPdfFontSize(
+  text: string,
+  maxWidth: number,
+  maxFontSize: number,
+  minFontSize = 6.5,
+  font: FontKey = 'F1',
+): number {
+  const clean = sanitizePdfText(text);
+  if (!clean || maxWidth <= 0) return maxFontSize;
+  const naturalWidth = estimateTextWidth(clean, maxFontSize, font);
+  if (naturalWidth <= maxWidth) return maxFontSize;
+  const scaled = Math.floor(((maxFontSize * maxWidth) / naturalWidth) * 100) / 100;
+  return Math.max(minFontSize, scaled);
+}
+
+/**
+ * Truncates `text` only if it still exceeds `maxWidth` at `fontSize`, preferring word/separator boundaries.
+ */
+export function clipPdfTextToWidth(text: string, maxWidth: number, fontSize: number, font: FontKey = 'F1'): string {
+  const clean = sanitizePdfText(text).trim();
+  if (!clean || estimateTextWidth(clean, fontSize, font) <= maxWidth) return clean;
+  const ellipsis = '...';
+  const targetWidth = Math.max(10, maxWidth - estimateTextWidth(ellipsis, fontSize, font));
+  let out = '';
+  for (let i = 0; i < clean.length; i++) {
+    const next = out + clean[i];
+    if (estimateTextWidth(next, fontSize, font) > targetWidth) break;
+    out = next;
+  }
+  return `${out.trimEnd()}${ellipsis}`;
 }
 
 /** Word-wraps a string to fit within `maxWidth` points. */
@@ -101,7 +139,6 @@ export function wrapPdfText(text: string, maxWidth: number, fontSize: number, fo
       if (estimateTextWidth(word, fontSize, font) <= maxWidth) {
         current = word;
       } else {
-        // Hard-break an extra-long token
         let chunk = '';
         for (const ch of word) {
           if (estimateTextWidth(chunk + ch, fontSize, font) > maxWidth && chunk) {
@@ -211,6 +248,29 @@ class PdfDocumentBuilder {
     this.pushOp(ops.join('\n'), pIdx);
   }
 
+  /**
+   * Draws a right-side decorative woven/geometric pattern strip matching the solid UI banners.
+   */
+  drawPatternStrip(
+    x: number,
+    topY: number,
+    width: number,
+    height: number,
+    bgFill: Rgb,
+    patternInk: Rgb,
+  ): void {
+    this.drawRect(x, topY, width, height, { fill: bgFill });
+    const step = 10;
+    for (let offset = 6; offset < height - 2; offset += step) {
+      const yStart = topY + offset;
+      const yEnd = Math.max(topY + 2, yStart - 6);
+      this.drawLine(x + 2, yStart, x + width - 2, yEnd, {
+        color: patternInk,
+        lineWidth: 1.6,
+      });
+    }
+  }
+
   drawText(
     text: string,
     x: number,
@@ -218,15 +278,29 @@ class PdfDocumentBuilder {
     options?: {
       font?: FontKey;
       size?: number;
+      minSize?: number;
+      maxWidth?: number;
       color?: Rgb;
       align?: 'left' | 'center' | 'right';
       pageIndex?: number;
     },
   ): void {
-    const clean = sanitizePdfText(text);
+    let clean = sanitizePdfText(text);
     if (!clean) return;
     const font = options?.font ?? 'F1';
-    const size = options?.size ?? 10;
+    const requestedSize = options?.size ?? 10;
+    const minSize = options?.minSize ?? 6.5;
+    const maxWidth = options?.maxWidth;
+
+    const size =
+      maxWidth && maxWidth > 0
+        ? fitPdfFontSize(clean, maxWidth, requestedSize, minSize, font)
+        : requestedSize;
+
+    if (maxWidth && maxWidth > 0 && estimateTextWidth(clean, size, font) > maxWidth + 0.5) {
+      clean = clipPdfTextToWidth(clean, maxWidth, size, font);
+    }
+
     const color = options?.color ?? [0.09, 0.11, 0.1];
     const align = options?.align ?? 'left';
     const pIdx = options?.pageIndex ?? this.currentPageIdx;
@@ -253,21 +327,26 @@ class PdfDocumentBuilder {
     const total = this.pages.length;
     for (let i = 0; i < total; i++) {
       const footerY = this.pageHeight - 20;
-      this.drawLine(this.margin, footerY - 10, this.pageWidth - this.margin, footerY - 10, {
-        color: [0.88, 0.9, 0.89],
-        lineWidth: 0.5,
+      this.drawRect(this.margin, footerY - 12, this.contentWidth, 16, {
+        fill: [0.067, 0.075, 0.082],
         pageIndex: i,
       });
-      this.drawText(leftLabel, this.margin, footerY, {
-        font: 'F1',
-        size: 8,
-        color: [0.45, 0.5, 0.48],
+      this.drawRect(this.margin, footerY - 12, 6, 16, {
+        fill: [0.953, 0.569, 0.125],
         pageIndex: i,
       });
-      this.drawText(`Page ${i + 1} of ${total}`, this.pageWidth - this.margin, footerY, {
-        font: 'F1',
-        size: 8,
-        color: [0.45, 0.5, 0.48],
+      this.drawText(leftLabel, this.margin + 12, footerY - 1.5, {
+        font: 'F2',
+        size: 7.5,
+        minSize: 6,
+        maxWidth: this.contentWidth - 95,
+        color: [0.85, 0.87, 0.86],
+        pageIndex: i,
+      });
+      this.drawText(`PAGE ${i + 1} OF ${total}`, this.pageWidth - this.margin - 8, footerY - 1.5, {
+        font: 'F2',
+        size: 7.5,
+        color: [0.953, 0.569, 0.125],
         align: 'right',
         pageIndex: i,
       });
@@ -275,16 +354,6 @@ class PdfDocumentBuilder {
   }
 
   buildBytes(): Uint8Array {
-    // Object layout:
-    // 1: Catalog
-    // 2: Pages
-    // 3: Font F1 (Helvetica)
-    // 4: Font F2 (Helvetica-Bold)
-    // 5: Font F3 (Courier)
-    // 6: Font F4 (Courier-Bold)
-    // For each page i (0..N-1):
-    //   Page object = 7 + i * 2
-    //   Content stream object = 8 + i * 2
     const objects: string[] = [];
     const pageObjNums: number[] = [];
 
@@ -348,25 +417,36 @@ class PdfDocumentBuilder {
   }
 }
 
+/**
+ * Palette inspired by the Industrial Swatch & Woven Label reference cards:
+ * - Iron Core (#111315 / #222A2A)
+ * - Industrial Aqua (#4FBBBC)
+ * - Rust Signal (#EC4624)
+ * - Heat Marker (#F39120)
+ * - Architectural Cream (#EFECE1)
+ * - Kitchen Emerald (#16A34A)
+ */
 const COLORS = {
-  brandDark: [0.09, 0.14, 0.11] as Rgb,
-  brandGreen: [0.16, 0.48, 0.31] as Rgb,
-  brandTint: [0.94, 0.97, 0.95] as Rgb,
+  ironCore: [0.067, 0.075, 0.082] as Rgb, // #111315
+  ironSlate: [0.133, 0.165, 0.165] as Rgb, // #222A2A
+  industrialAqua: [0.31, 0.733, 0.737] as Rgb, // #4FBBBC
+  rustSignal: [0.925, 0.275, 0.141] as Rgb, // #EC4624
+  heatMarker: [0.953, 0.569, 0.125] as Rgb, // #F39120
+  archCream: [0.937, 0.925, 0.882] as Rgb, // #EFECE1
+  archCreamBorder: [0.835, 0.808, 0.71] as Rgb, // #D5CEB5
+  emeraldSolid: [0.086, 0.639, 0.29] as Rgb, // #16A34A
+  emeraldBright: [0.29, 0.871, 0.502] as Rgb, // #4ADE80
   ink: [0.09, 0.11, 0.1] as Rgb,
   muted: [0.42, 0.46, 0.44] as Rgb,
-  line: [0.86, 0.88, 0.87] as Rgb,
-  soft: [0.96, 0.97, 0.96] as Rgb,
-  amberBg: [1.0, 0.96, 0.88] as Rgb,
-  amberBorder: [0.95, 0.76, 0.35] as Rgb,
-  amberText: [0.55, 0.33, 0.04] as Rgb,
-  redBg: [0.99, 0.93, 0.93] as Rgb,
-  redText: [0.72, 0.14, 0.14] as Rgb,
+  mutedLight: [0.74, 0.77, 0.76] as Rgb,
+  line: [0.85, 0.87, 0.86] as Rgb,
+  soft: [0.96, 0.965, 0.96] as Rgb,
   white: [1, 1, 1] as Rgb,
 };
 
 /**
  * Generates a complete, printable & downloadable PDF receipt for an order,
- * tailored to Customers, Drivers, Kitchen Staff, or Store Managers.
+ * styled with solid architectural split-block banners and auto-scaling typography.
  */
 export function generateOrderReceiptPdf(
   order: Order,
@@ -398,160 +478,300 @@ export function generateOrderReceiptPdf(
           ? 'MERCHANT ORDER RECEIPT'
           : 'OFFICIAL ORDER RECEIPT';
 
-  // Top Header Banner
-  const headerH = 74;
-  doc.drawRect(x0, doc.y, w, headerH, {
-    fill: variant === 'driver' ? [0.11, 0.15, 0.22] : variant === 'kitchen' ? [0.11, 0.14, 0.12] : COLORS.brandDark,
-  });
+  const accentColor: Rgb =
+    variant === 'driver'
+      ? COLORS.industrialAqua
+      : variant === 'kitchen'
+        ? COLORS.heatMarker
+        : COLORS.emeraldSolid;
 
-  doc.drawText(variantTitle, x0 + 16, doc.y + 20, {
+  const accentTextOnBlock: Rgb =
+    variant === 'driver' || variant === 'kitchen' ? COLORS.ironCore : COLORS.white;
+
+  // 1. Top Split-Zone Solid Header Banner (Left Solid Code Block + Center Iron Core + Right Pattern Strip)
+  const headerH = 76;
+  const leftBlockW = 118;
+  const rightStripW = 18;
+  const centerMaxW = w - leftBlockW - rightStripW - 28;
+
+  // Center Iron Core Body
+  doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.ironCore });
+  // Left Solid Accent Block
+  doc.drawRect(x0, doc.y, leftBlockW, headerH, { fill: accentColor });
+  // Right Decorative Pattern Strip
+  doc.drawPatternStrip(xRight - rightStripW, doc.y, rightStripW, headerH, accentColor, COLORS.ironCore);
+
+  // Left Block Text: ORDER #CODE (auto-fitted to leftBlockW - 18 so 6+ char codes like #UG6YNY never overflow)
+  doc.drawText(`ORDER #${code}`, x0 + leftBlockW / 2, doc.y + 35, {
+    font: 'F4',
+    size: 13,
+    minSize: 8,
+    maxWidth: leftBlockW - 18,
+    color: accentTextOnBlock,
+    align: 'center',
+  });
+  doc.drawText(isDelivery ? 'DELIVERY' : 'PICKUP', x0 + leftBlockW / 2, doc.y + 52, {
     font: 'F2',
     size: 8.5,
-    color: [0.68, 0.88, 0.75],
+    maxWidth: leftBlockW - 18,
+    color: accentTextOnBlock,
+    align: 'center',
   });
-  doc.drawText(storeName, x0 + 16, doc.y + 39, {
+
+  // Center Block Text: Kicker, Restaurant Name, Contact Info, Status
+  const centerX = x0 + leftBlockW + 14;
+  const statusStr = STATUS_LABEL[order.status].toUpperCase();
+  const statusW = estimateTextWidth(statusStr, 8.5, 'F2') + 12;
+
+  doc.drawText(variantTitle, centerX, doc.y + 20, {
+    font: 'F2',
+    size: 8.5,
+    minSize: 6.5,
+    maxWidth: centerMaxW - statusW,
+    color: variant === 'customer' || variant === 'staff' ? COLORS.emeraldBright : accentColor,
+  });
+  doc.drawText(statusStr, xRight - rightStripW - 12, doc.y + 20, {
+    font: 'F2',
+    size: 8.5,
+    color: COLORS.mutedLight,
+    align: 'right',
+  });
+  doc.drawText(storeName, centerX, doc.y + 41, {
     font: 'F2',
     size: 18,
+    minSize: 11,
+    maxWidth: centerMaxW,
     color: COLORS.white,
   });
 
   const contactParts = [storeAddress, storePhone, storeEmail].filter(Boolean).join('  |  ');
   if (contactParts) {
-    doc.drawText(contactParts.slice(0, 95), x0 + 16, doc.y + 56, {
+    // Auto-scales the contact line so long emails like orders@huddlesnackstop.com never get chopped mid-word
+    doc.drawText(contactParts, centerX, doc.y + 58, {
       font: 'F1',
       size: 8.5,
-      color: [0.82, 0.86, 0.84],
+      minSize: 6.5,
+      maxWidth: centerMaxW,
+      color: COLORS.mutedLight,
     });
   }
 
-  // Right side of header: Order # + Fulfillment Badge
-  doc.drawText(`ORDER #${code}`, xRight - 16, doc.y + 34, {
-    font: 'F4',
-    size: 17,
-    color: COLORS.white,
-    align: 'right',
-  });
-  doc.drawText(`${isDelivery ? 'DELIVERY' : 'PICKUP'}  |  ${STATUS_LABEL[order.status].toUpperCase()}`, xRight - 16, doc.y + 53, {
+  doc.y += headerH + 12;
+
+  // 2. Solid Split-Block Payment / Cash Collection Banner
+  const payBannerH = 42;
+  const payBadgeW = 92;
+  const payRightPad = 92;
+  const payTextMaxW = w - payBadgeW - payRightPad - 24;
+  const payBannerAccent: Rgb = cashDue ? COLORS.heatMarker : COLORS.emeraldSolid;
+  const payBadgeInk: Rgb = cashDue ? COLORS.ironCore : COLORS.white;
+
+  doc.drawRect(x0, doc.y, w, payBannerH, { fill: COLORS.ironSlate });
+  doc.drawRect(x0, doc.y, payBadgeW, payBannerH, { fill: payBannerAccent });
+  doc.drawPatternStrip(xRight - 14, doc.y, 14, payBannerH, payBannerAccent, COLORS.ironSlate);
+
+  doc.drawText(cashDue ? 'CASH DUE' : 'PAID', x0 + payBadgeW / 2, doc.y + 20, {
     font: 'F2',
-    size: 9,
-    color: [0.85, 0.92, 0.88],
+    size: 10,
+    maxWidth: payBadgeW - 12,
+    color: payBadgeInk,
+    align: 'center',
+  });
+  doc.drawText(paymentMethodOf(order).toUpperCase(), x0 + payBadgeW / 2, doc.y + 32, {
+    font: 'F1',
+    size: 7.5,
+    maxWidth: payBadgeW - 12,
+    color: payBadgeInk,
+    align: 'center',
+  });
+
+  // Note: `pay.label` already includes the method (e.g. "Paid · Cash" or "Paid · Card")
+  const payHeadline = cashDue
+    ? `COLLECT ${formatMoney(order.total)} IN CASH (${isDelivery ? 'AT DROP-OFF' : 'AT PICKUP'})`
+    : `${pay.label.toUpperCase()} - DO NOT COLLECT CASH`;
+
+  doc.drawText(payHeadline, x0 + payBadgeW + 14, doc.y + 18, {
+    font: 'F2',
+    size: 10,
+    minSize: 7.5,
+    maxWidth: payTextMaxW,
+    color: cashDue ? COLORS.heatMarker : COLORS.white,
+  });
+
+  const paySubline =
+    variant === 'driver'
+      ? `Driver Tip: ${formatMoney(order.deliveryTip || 0)}   |   Delivery Fee: ${formatMoney(order.deliveryFee || 0)}   |   Driver: ${order.driverName || 'Unassigned'}`
+      : order.paymentCollectedBy && order.paymentStatus === 'paid'
+        ? `Recorded by: ${order.paymentCollectedBy}   |   Order ID: ${order.id}`
+        : `Order Reference: #${code}   |   ID: ${order.id}`;
+
+  doc.drawText(paySubline, x0 + payBadgeW + 14, doc.y + 32, {
+    font: 'F1',
+    size: 8.5,
+    minSize: 6.5,
+    maxWidth: payTextMaxW,
+    color: COLORS.mutedLight,
+  });
+
+  doc.drawText(formatMoney(order.total), xRight - 24, doc.y + 26, {
+    font: 'F4',
+    size: 13,
+    minSize: 9,
+    maxWidth: payRightPad - 12,
+    color: cashDue ? COLORS.heatMarker : COLORS.emeraldBright,
     align: 'right',
   });
 
-  doc.y += headerH + 14;
+  doc.y += payBannerH + 12;
 
-  // Driver / Cash Collection Prominent Alert Box
-  if (cashDue || variant === 'driver') {
-    const alertH = 38;
-    const isWarning = cashDue;
-    doc.drawRect(x0, doc.y, w, alertH, {
-      fill: isWarning ? COLORS.amberBg : COLORS.brandTint,
-      stroke: isWarning ? COLORS.amberBorder : COLORS.brandGreen,
-      lineWidth: 1,
-    });
-    const headline = cashDue
-      ? `COLLECT ${formatMoney(order.total)} IN CASH (${isDelivery ? 'AT DROP-OFF' : 'AT PICKUP'})`
-      : `PREPAID (${pay.label.toUpperCase()}) - DO NOT COLLECT CASH`;
-    doc.drawText(headline, x0 + 14, doc.y + 16, {
-      font: 'F2',
-      size: 10.5,
-      color: isWarning ? COLORS.amberText : COLORS.brandGreen,
-    });
-    const subline =
-      variant === 'driver'
-        ? `Driver Tip: ${formatMoney(order.deliveryTip || 0)}   |   Delivery Fee: ${formatMoney(order.deliveryFee || 0)}   |   Driver: ${order.driverName || 'Unassigned'}`
-        : `Payment Status: ${pay.label}   |   Order ID: ${order.id}`;
-    doc.drawText(subline, x0 + 14, doc.y + 30, {
-      font: 'F1',
-      size: 8.5,
-      color: isWarning ? COLORS.amberText : COLORS.ink,
-    });
-    doc.y += alertH + 12;
-  }
-
-  // Two-column Metadata Box: Order Details (Left) & Customer / Fulfillment Details (Right)
-  const metaH = 82;
+  // 3. Architectural Cream 3-Column Metadata Swatch Box (inspired by IRON CORE / ARCHITECTURAL CREAM reference)
+  const metaH = 72;
   doc.drawRect(x0, doc.y, w, metaH, {
-    fill: COLORS.soft,
-    stroke: COLORS.line,
-    lineWidth: 0.75,
+    fill: COLORS.archCream,
+    stroke: COLORS.archCreamBorder,
+    lineWidth: 0.85,
   });
-  const midX = x0 + w * 0.5;
-  doc.drawLine(midX, doc.y + 8, midX, doc.y + metaH - 8, { color: COLORS.line, lineWidth: 0.6 });
+  const colW = w / 3;
+  const colInnerW = colW - 22;
+  doc.drawLine(x0 + colW, doc.y + 10, x0 + colW, doc.y + metaH - 10, {
+    color: COLORS.archCreamBorder,
+    lineWidth: 0.7,
+  });
+  doc.drawLine(x0 + colW * 2, doc.y + 10, x0 + colW * 2, doc.y + metaH - 10, {
+    color: COLORS.archCreamBorder,
+    lineWidth: 0.7,
+  });
 
-  // Left column
-  let ly = doc.y + 16;
-  doc.drawText('ORDER INFORMATION', x0 + 12, ly, { font: 'F2', size: 8, color: COLORS.muted });
-  ly += 14;
-  doc.drawText(`Placed: ${createdStr}`, x0 + 12, ly, { font: 'F1', size: 9.5, color: COLORS.ink });
-  ly += 13;
-  doc.drawText(
-    `Fulfillment: ${isDelivery ? 'Delivery' : 'Pickup'}${order.scheduledTime ? ` (Scheduled: ${order.scheduledTime})` : ' (ASAP)'}`,
-    x0 + 12,
-    ly,
-    { font: 'F1', size: 9.5, color: COLORS.ink },
-  );
-  ly += 13;
-  doc.drawText(`Payment: ${pay.label} (${paymentMethodOf(order).toUpperCase()})`, x0 + 12, ly, {
+  // Column 1: Order Timing & Schedule
+  doc.drawText('PLACED & TIMING', x0 + 12, doc.y + 17, {
+    font: 'F2',
+    size: 7.5,
+    maxWidth: colInnerW,
+    color: COLORS.rustSignal,
+  });
+  doc.drawText(createdStr, x0 + 12, doc.y + 32, {
     font: 'F2',
     size: 9.5,
-    color: cashDue ? COLORS.amberText : COLORS.brandGreen,
+    minSize: 7,
+    maxWidth: colInnerW,
+    color: COLORS.ironCore,
   });
-  if (order.paymentCollectedBy && order.paymentStatus === 'paid') {
-    ly += 12;
-    doc.drawText(`Collected by: ${order.paymentCollectedBy}`, x0 + 12, ly, { font: 'F1', size: 8.5, color: COLORS.muted });
-  }
-
-  // Right column
-  let ry = doc.y + 16;
-  doc.drawText(isDelivery ? 'CUSTOMER & DELIVERY ADDRESS' : 'CUSTOMER & PICKUP LOCATION', midX + 12, ry, {
-    font: 'F2',
-    size: 8,
+  doc.drawText(
+    order.scheduledTime ? `Scheduled: ${order.scheduledTime}` : 'ASAP Kitchen Preparation',
+    x0 + 12,
+    doc.y + 46,
+    { font: 'F1', size: 8.5, minSize: 6.5, maxWidth: colInnerW, color: COLORS.ironSlate },
+  );
+  doc.drawText(`ID: ${order.id}`, x0 + 12, doc.y + 59, {
+    font: 'F3',
+    size: 7.5,
+    minSize: 6,
+    maxWidth: colInnerW,
     color: COLORS.muted,
   });
-  ry += 14;
-  doc.drawText(`Customer: ${order.customerName || 'Guest'}`, midX + 12, ry, { font: 'F2', size: 9.5, color: COLORS.ink });
-  ry += 13;
-  doc.drawText(`Phone: ${order.customerPhone || 'Not provided'}`, midX + 12, ry, { font: 'F1', size: 9.5, color: COLORS.ink });
-  ry += 13;
+
+  // Column 2: Customer & Contact
+  const c2x = x0 + colW + 12;
+  doc.drawText('CUSTOMER & CONTACT', c2x, doc.y + 17, {
+    font: 'F2',
+    size: 7.5,
+    maxWidth: colInnerW,
+    color: COLORS.rustSignal,
+  });
+  doc.drawText(order.customerName || 'Guest', c2x, doc.y + 32, {
+    font: 'F2',
+    size: 10,
+    minSize: 7.5,
+    maxWidth: colInnerW,
+    color: COLORS.ironCore,
+  });
+  doc.drawText(`Phone: ${order.customerPhone || 'Not provided'}`, c2x, doc.y + 46, {
+    font: 'F1',
+    size: 8.5,
+    minSize: 6.5,
+    maxWidth: colInnerW,
+    color: COLORS.ironSlate,
+  });
+  if (order.driverName) {
+    doc.drawText(`Driver: ${order.driverName}`, c2x, doc.y + 59, {
+      font: 'F2',
+      size: 8.5,
+      minSize: 6.5,
+      maxWidth: colInnerW,
+      color: COLORS.ironCore,
+    });
+  }
+
+  // Column 3: Fulfillment Destination
+  const c3x = x0 + colW * 2 + 12;
+  doc.drawText(isDelivery ? 'DELIVERY DESTINATION' : 'PICKUP LOCATION', c3x, doc.y + 17, {
+    font: 'F2',
+    size: 7.5,
+    maxWidth: colInnerW,
+    color: COLORS.rustSignal,
+  });
   const locationLine = isDelivery
-    ? `Deliver to: ${order.deliveryAddress || 'Address on file'}`
-    : `Pickup at: ${storeAddress || storeName}`;
-  const locWrapped = wrapPdfText(locationLine, w * 0.5 - 24, 9, 'F1');
-  for (const line of locWrapped.slice(0, 2)) {
-    doc.drawText(line, midX + 12, ry, { font: 'F1', size: 9, color: COLORS.ink });
-    ry += 11;
+    ? order.deliveryAddress || 'Address on file'
+    : storeAddress || storeName;
+  const locWrapped = wrapPdfText(locationLine, colInnerW, 8.5, 'F2');
+  let locY = doc.y + 32;
+  for (const line of locWrapped.slice(0, 3)) {
+    doc.drawText(line, c3x, locY, { font: 'F2', size: 8.5, minSize: 6.5, maxWidth: colInnerW, color: COLORS.ironCore });
+    locY += 12;
   }
 
   doc.y += metaH + 12;
 
-  // Special Order Notes (if any)
+  // 4. Solid Rust Signal Split Banner for Special Order Notes
   if (order.notes) {
-    const noteLines = wrapPdfText(`Order Note: ${order.notes}`, w - 24, 9.5, 'F2');
-    const noteH = 14 + noteLines.length * 12;
-    doc.drawRect(x0, doc.y, w, noteH, {
-      fill: COLORS.redBg,
-      stroke: [0.92, 0.72, 0.72],
-      lineWidth: 0.75,
+    const noteLines = wrapPdfText(order.notes, w - 106, 9, 'F2');
+    const noteH = Math.max(28, 12 + noteLines.length * 12);
+    doc.drawRect(x0, doc.y, w, noteH, { fill: COLORS.ironCore });
+    doc.drawRect(x0, doc.y, 72, noteH, { fill: COLORS.rustSignal });
+    doc.drawText('NOTE', x0 + 36, doc.y + noteH / 2 + 3, {
+      font: 'F2',
+      size: 9,
+      color: COLORS.white,
+      align: 'center',
     });
     let ny = doc.y + 14;
     for (const line of noteLines) {
-      doc.drawText(line, x0 + 12, ny, { font: 'F2', size: 9.5, color: COLORS.redText });
+      doc.drawText(line, x0 + 84, ny, { font: 'F2', size: 9, maxWidth: w - 96, color: COLORS.white });
       ny += 12;
     }
     doc.y += noteH + 12;
   }
 
-  // Itemized Table Header
+  // 5. Itemized Table Header (Solid Iron Core + Accent Strip)
   const drawItemsHeader = () => {
-    doc.drawRect(x0, doc.y, w, 22, { fill: COLORS.brandDark });
-    doc.drawText('QTY', x0 + 10, doc.y + 14, { font: 'F2', size: 8.5, color: COLORS.white });
-    doc.drawText('ITEM & CUSTOMIZATIONS', x0 + 52, doc.y + 14, { font: 'F2', size: 8.5, color: COLORS.white });
+    doc.drawRect(x0, doc.y, w, 24, { fill: COLORS.ironCore });
+    doc.drawRect(x0, doc.y, 42, 24, { fill: accentColor });
+    doc.drawText('QTY', x0 + 21, doc.y + 15, {
+      font: 'F2',
+      size: 8.5,
+      color: accentTextOnBlock,
+      align: 'center',
+    });
+    doc.drawText('ITEM & CUSTOMIZATIONS', x0 + 54, doc.y + 15, {
+      font: 'F2',
+      size: 8.5,
+      color: COLORS.white,
+    });
     if (variant !== 'kitchen') {
-      doc.drawText('UNIT PRICE', xRight - 90, doc.y + 14, { font: 'F2', size: 8.5, color: COLORS.white, align: 'right' });
-      doc.drawText('LINE TOTAL', xRight - 10, doc.y + 14, { font: 'F2', size: 8.5, color: COLORS.white, align: 'right' });
+      doc.drawText('UNIT PRICE', xRight - 94, doc.y + 15, {
+        font: 'F2',
+        size: 8.5,
+        color: COLORS.mutedLight,
+        align: 'right',
+      });
+      doc.drawText('LINE TOTAL', xRight - 12, doc.y + 15, {
+        font: 'F2',
+        size: 8.5,
+        color: COLORS.white,
+        align: 'right',
+      });
     }
-    doc.y += 22;
+    doc.y += 24;
   };
 
   drawItemsHeader();
@@ -565,27 +785,42 @@ export function generateOrderReceiptPdf(
         : '';
     const modLines = modStr ? wrapPdfText(modStr, itemDescMaxWidth, 8.5, 'F1') : [];
     const noteLines = item.prepNotes ? wrapPdfText(`Prep note: "${item.prepNotes}"`, itemDescMaxWidth, 8.5, 'F2') : [];
-    const rowH = 20 + modLines.length * 11 + noteLines.length * 11;
+    const rowH = 22 + modLines.length * 11 + noteLines.length * 11;
 
     doc.ensureSpace(rowH + 12, drawItemsHeader);
 
     if (idx % 2 === 1) {
-      doc.drawRect(x0, doc.y, w, rowH, { fill: [0.98, 0.985, 0.98] });
+      doc.drawRect(x0, doc.y, w, rowH, { fill: COLORS.soft });
     }
     doc.drawLine(x0, doc.y + rowH, xRight, doc.y + rowH, { color: COLORS.line, lineWidth: 0.5 });
 
-    let iy = doc.y + 14;
-    doc.drawText(`${item.quantity}x`, x0 + 10, iy, { font: 'F4', size: 10, color: COLORS.brandGreen });
-    doc.drawText(item.name, x0 + 52, iy, { font: 'F2', size: 10, color: COLORS.ink });
+    // Solid quantity pill block
+    doc.drawRect(x0 + 8, doc.y + 4, 26, 14, { fill: COLORS.ironSlate });
+    doc.drawText(`${item.quantity}x`, x0 + 21, doc.y + 14, {
+      font: 'F4',
+      size: 9,
+      maxWidth: 22,
+      color: COLORS.white,
+      align: 'center',
+    });
+
+    let iy = doc.y + 14.5;
+    doc.drawText(item.name, x0 + 54, iy, {
+      font: 'F2',
+      size: 10,
+      minSize: 7.5,
+      maxWidth: itemDescMaxWidth,
+      color: COLORS.ink,
+    });
 
     if (variant !== 'kitchen') {
-      doc.drawText(formatMoney(item.price), xRight - 90, iy, {
+      doc.drawText(formatMoney(item.price), xRight - 94, iy, {
         font: 'F3',
         size: 9.5,
         color: COLORS.muted,
         align: 'right',
       });
-      doc.drawText(formatMoney(item.price * item.quantity), xRight - 10, iy, {
+      doc.drawText(formatMoney(item.price * item.quantity), xRight - 12, iy, {
         font: 'F4',
         size: 9.5,
         color: COLORS.ink,
@@ -595,11 +830,11 @@ export function generateOrderReceiptPdf(
 
     for (const mLine of modLines) {
       iy += 11;
-      doc.drawText(mLine, x0 + 52, iy, { font: 'F1', size: 8.5, color: COLORS.muted });
+      doc.drawText(mLine, x0 + 54, iy, { font: 'F1', size: 8.5, color: COLORS.muted });
     }
     for (const nLine of noteLines) {
       iy += 11;
-      doc.drawText(nLine, x0 + 52, iy, { font: 'F2', size: 8.5, color: COLORS.redText });
+      doc.drawText(nLine, x0 + 54, iy, { font: 'F2', size: 8.5, color: COLORS.rustSignal });
     }
 
     doc.y += rowH;
@@ -607,21 +842,21 @@ export function generateOrderReceiptPdf(
 
   doc.y += 14;
 
-  // Totals & Financial Breakdown Box (for Customer, Driver, Staff)
+  // 6. Totals & Financial Breakdown Box + Solid Grand Total Banner
   if (variant !== 'kitchen') {
     const computedSub =
       order.subtotal !== undefined
         ? order.subtotal
         : (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
 
-    const rows: { label: string; value: string; bold?: boolean; color?: Rgb }[] = [
+    const rows: { label: string; value: string; color?: Rgb }[] = [
       { label: 'Subtotal', value: formatMoney(computedSub) },
     ];
     if (order.discountAmount && order.discountAmount > 0) {
       rows.push({
         label: `Discount${order.promoCode ? ` (${order.promoCode})` : ''}`,
         value: `-${formatMoney(order.discountAmount)}`,
-        color: COLORS.brandGreen,
+        color: COLORS.emeraldSolid,
       });
     }
     if (order.deliveryFee && order.deliveryFee > 0) {
@@ -640,21 +875,30 @@ export function generateOrderReceiptPdf(
       rows.push({ label: 'Driver Tip', value: formatMoney(order.deliveryTip) });
     }
 
-    const boxWidth = 240;
+    const boxWidth = 250;
     const boxX = xRight - boxWidth;
-    const boxH = rows.length * 16 + 44 + (order.refundAmount ? 20 : 0);
+    const subBoxH = rows.length * 16 + 10;
+    const totalBarH = 30;
+    const leftCardH = Math.max(subBoxH + totalBarH, 74);
+    const totalHeight = Math.max(leftCardH, subBoxH + totalBarH + (order.refundAmount ? 22 : 0));
 
-    doc.ensureSpace(boxH + 60);
+    doc.ensureSpace(totalHeight + 60);
 
-    doc.drawRect(boxX, doc.y, boxWidth, boxH, {
+    // Subtotals Card
+    doc.drawRect(boxX, doc.y, boxWidth, subBoxH, {
       fill: COLORS.soft,
       stroke: COLORS.line,
       lineWidth: 0.75,
     });
 
-    let ty = doc.y + 16;
+    let ty = doc.y + 15;
     for (const r of rows) {
-      doc.drawText(r.label, boxX + 12, ty, { font: 'F1', size: 9.5, color: r.color || COLORS.muted });
+      doc.drawText(r.label, boxX + 12, ty, {
+        font: 'F1',
+        size: 9.5,
+        maxWidth: boxWidth - 95,
+        color: r.color || COLORS.muted,
+      });
       doc.drawText(r.value, xRight - 12, ty, {
         font: 'F3',
         size: 9.5,
@@ -664,85 +908,114 @@ export function generateOrderReceiptPdf(
       ty += 16;
     }
 
-    doc.drawLine(boxX + 12, ty - 6, xRight - 12, ty - 6, { color: COLORS.line, lineWidth: 0.75 });
-    ty += 8;
-    doc.drawText(cashDue ? 'TOTAL DUE (CASH)' : 'TOTAL', boxX + 12, ty, {
-      font: 'F2',
-      size: 11,
-      color: cashDue ? COLORS.amberText : COLORS.ink,
+    // Solid Split-Block Grand Total Bar
+    const totalY = doc.y + subBoxH;
+    doc.drawRect(boxX, totalY, boxWidth, totalBarH, { fill: COLORS.ironCore });
+    doc.drawRect(boxX, totalY, 108, totalBarH, {
+      fill: cashDue ? COLORS.heatMarker : accentColor,
     });
-    doc.drawText(formatMoney(order.total), xRight - 12, ty, {
+    doc.drawText(cashDue ? 'TOTAL DUE' : 'GRAND TOTAL', boxX + 54, totalY + 19, {
+      font: 'F2',
+      size: 9,
+      maxWidth: 96,
+      color: cashDue ? COLORS.ironCore : accentTextOnBlock,
+      align: 'center',
+    });
+    doc.drawText(formatMoney(order.total), xRight - 12, totalY + 20, {
       font: 'F4',
-      size: 12,
-      color: cashDue ? COLORS.amberText : COLORS.brandGreen,
+      size: 13,
+      minSize: 9,
+      maxWidth: boxWidth - 124,
+      color: COLORS.white,
       align: 'right',
     });
 
     if (order.refundAmount && order.refundAmount > 0) {
-      ty += 16;
-      doc.drawText('Refunded', boxX + 12, ty, { font: 'F2', size: 9, color: COLORS.redText });
-      doc.drawText(`-${formatMoney(order.refundAmount)} (Net ${formatMoney(netAmount(order))})`, xRight - 12, ty, {
+      const refY = totalY + totalBarH + 2;
+      doc.drawRect(boxX, refY, boxWidth, 20, { fill: COLORS.rustSignal });
+      doc.drawText('REFUNDED', boxX + 10, refY + 13, { font: 'F2', size: 8, color: COLORS.white });
+      doc.drawText(`-${formatMoney(order.refundAmount)} (Net ${formatMoney(netAmount(order))})`, xRight - 10, refY + 13, {
         font: 'F4',
-        size: 9,
-        color: COLORS.redText,
+        size: 8.5,
+        maxWidth: boxWidth - 80,
+        color: COLORS.white,
         align: 'right',
       });
     }
 
-    // Left of totals box: Thank-you / Driver signature block
-    const leftBlockW = w - boxWidth - 16;
+    // Left of totals box: Thank-you / Driver hand-off block
+    const leftBlockW2 = w - boxWidth - 14;
     if (variant === 'driver') {
-      doc.drawRect(x0, doc.y, leftBlockW, boxH, {
-        fill: COLORS.white,
-        stroke: COLORS.line,
+      doc.drawRect(x0, doc.y, leftBlockW2, leftCardH, {
+        fill: COLORS.archCream,
+        stroke: COLORS.archCreamBorder,
         lineWidth: 0.75,
       });
-      doc.drawText('DELIVERY HAND-OFF CONFIRMATION', x0 + 12, doc.y + 16, {
+      doc.drawRect(x0, doc.y, leftBlockW2, 20, { fill: COLORS.ironSlate });
+      doc.drawText('DELIVERY HAND-OFF CONFIRMATION', x0 + 10, doc.y + 13.5, {
         font: 'F2',
+        size: 8,
+        maxWidth: leftBlockW2 - 20,
+        color: COLORS.industrialAqua,
+      });
+      doc.drawText(`Driver: ${order.driverName || '____________________'}`, x0 + 12, doc.y + 38, {
+        font: 'F2',
+        size: 9,
+        maxWidth: leftBlockW2 - 24,
+        color: COLORS.ironCore,
+      });
+      doc.drawText('Received By / Signature: _______________________', x0 + 12, doc.y + 58, {
+        font: 'F1',
         size: 8.5,
-        color: COLORS.muted,
-      });
-      doc.drawText(`Driver: ${order.driverName || '____________________'}`, x0 + 12, doc.y + 34, {
-        font: 'F1',
-        size: 9,
-        color: COLORS.ink,
-      });
-      doc.drawText('Delivered At / Signature: ___________________________', x0 + 12, doc.y + 56, {
-        font: 'F1',
-        size: 9,
-        color: COLORS.ink,
+        maxWidth: leftBlockW2 - 24,
+        color: COLORS.ironSlate,
       });
     } else {
-      doc.drawText(`Thank you for ordering from ${storeName}!`, x0, doc.y + 16, {
+      doc.drawRect(x0, doc.y, leftBlockW2, leftCardH, {
+        fill: COLORS.archCream,
+        stroke: COLORS.archCreamBorder,
+        lineWidth: 0.75,
+      });
+      doc.drawRect(x0, doc.y, 8, leftCardH, { fill: accentColor });
+      doc.drawText(`Thank you for ordering from ${storeName}!`, x0 + 18, doc.y + 22, {
         font: 'F2',
         size: 10.5,
-        color: COLORS.ink,
+        minSize: 7.5,
+        maxWidth: leftBlockW2 - 28,
+        color: COLORS.ironCore,
       });
-      doc.drawText(`Order Reference: #${code} (${order.id})`, x0, doc.y + 32, {
-        font: 'F1',
+      doc.drawText(`Verified Receipt  |  Order #${code}`, x0 + 18, doc.y + 38, {
+        font: 'F2',
         size: 8.5,
-        color: COLORS.muted,
+        maxWidth: leftBlockW2 - 28,
+        color: COLORS.rustSignal,
+      });
+      doc.drawText(`Order ID: ${order.id}`, x0 + 18, doc.y + 52, {
+        font: 'F1',
+        size: 8,
+        maxWidth: leftBlockW2 - 28,
+        color: COLORS.ironSlate,
       });
       if (order.paymentIntentId && !order.paymentIntentId.startsWith('mock_')) {
-        doc.drawText(`Card Ref: ${order.paymentIntentId.slice(-12)}`, x0, doc.y + 46, {
+        doc.drawText(`Card Ref: ${order.paymentIntentId.slice(-12)}`, x0 + 18, doc.y + 65, {
           font: 'F3',
-          size: 8.5,
+          size: 8,
+          maxWidth: leftBlockW2 - 28,
           color: COLORS.muted,
         });
       }
     }
 
-    doc.y += boxH + 18;
+    doc.y += totalHeight + 18;
   }
 
-  doc.addPageFooters(`${storeName}  |  Order #${code}  |  Powered by OrderFlow`);
+  doc.addPageFooters(`${storeName.toUpperCase()}  |  ORDER #${code}  |  VERIFIED ORDERFLOW RECEIPT`);
   return doc.buildBytes();
 }
 
 /**
- * Generates a customizable multi-page Sales & Insights PDF report with executive KPIs,
- * revenue waterfall, payment/fulfillment split, category & item breakdowns, peak hours,
- * driver/promo reconciliation, and an itemized order ledger.
+ * Generates a customizable multi-page Sales & Insights PDF report styled with
+ * solid architectural split-block banners and Industrial Swatch KPI cards.
  */
 export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
   const sections: SalesReportSections = { ...DEFAULT_REPORT_SECTIONS, ...(input.sections || {}) };
@@ -756,54 +1029,110 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
   const generatedStr = format(input.generatedAt || new Date(), 'MMM d, yyyy h:mm a');
   const { analytics } = input;
 
-  // Report Cover Banner
-  const headerH = 76;
-  doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.brandDark });
-  doc.drawText('ORDERFLOW FINANCIAL & OPERATIONS REPORT', x0 + 16, doc.y + 20, {
+  // Report Cover Split-Zone Solid Banner
+  const headerH = 78;
+  const leftBlockW = 114;
+  const rightStripW = 18;
+  const centerMaxW = w - leftBlockW - rightStripW - 28;
+
+  doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.ironCore });
+  doc.drawRect(x0, doc.y, leftBlockW, headerH, { fill: COLORS.heatMarker });
+  doc.drawPatternStrip(xRight - rightStripW, doc.y, rightStripW, headerH, COLORS.heatMarker, COLORS.ironCore);
+
+  doc.drawText(formatMoney(analytics.netSales), x0 + leftBlockW / 2, doc.y + 36, {
+    font: 'F4',
+    size: 13,
+    minSize: 8,
+    maxWidth: leftBlockW - 16,
+    color: COLORS.ironCore,
+    align: 'center',
+  });
+  doc.drawText('NET REVENUE', x0 + leftBlockW / 2, doc.y + 52, {
+    font: 'F2',
+    size: 7.5,
+    maxWidth: leftBlockW - 16,
+    color: COLORS.ironCore,
+    align: 'center',
+  });
+
+  const cx0 = x0 + leftBlockW + 14;
+  doc.drawText('ORDERFLOW FINANCIAL & OPERATIONS REPORT', cx0, doc.y + 20, {
     font: 'F2',
     size: 8.5,
-    color: [0.68, 0.88, 0.75],
+    minSize: 6.5,
+    maxWidth: centerMaxW - 120,
+    color: COLORS.industrialAqua,
   });
-  doc.drawText(reportTitle.slice(0, 56), x0 + 16, doc.y + 40, {
+  doc.drawText(reportTitle, cx0, doc.y + 40, {
     font: 'F2',
-    size: 16,
+    size: 15.5,
+    minSize: 9.5,
+    maxWidth: centerMaxW,
     color: COLORS.white,
   });
-  doc.drawText(`Period: ${input.rangeLabel}   |   Generated: ${generatedStr}`, x0 + 16, doc.y + 58, {
+  doc.drawText(`Period: ${input.rangeLabel}   |   Generated: ${generatedStr}`, cx0, doc.y + 58, {
     font: 'F1',
-    size: 9,
-    color: [0.82, 0.86, 0.84],
+    size: 8.5,
+    minSize: 6.5,
+    maxWidth: centerMaxW,
+    color: COLORS.mutedLight,
   });
   if (input.preparedBy) {
-    doc.drawText(`Prepared by: ${input.preparedBy}`, xRight - 16, doc.y + 58, {
-      font: 'F1',
-      size: 8.5,
-      color: [0.82, 0.86, 0.84],
+    doc.drawText(`Prepared by: ${input.preparedBy}`, xRight - rightStripW - 12, doc.y + 20, {
+      font: 'F2',
+      size: 8,
+      minSize: 6.5,
+      maxWidth: 115,
+      color: COLORS.heatMarker,
       align: 'right',
     });
   }
-  doc.y += headerH + 14;
+  doc.y += headerH + 12;
 
   if (input.notes?.trim()) {
-    const lines = wrapPdfText(`Report Memo: ${input.notes.trim()}`, w - 24, 9, 'F1');
-    const h = 14 + lines.length * 12;
-    doc.drawRect(x0, doc.y, w, h, { fill: COLORS.brandTint, stroke: COLORS.brandGreen, lineWidth: 0.6 });
+    const lines = wrapPdfText(input.notes.trim(), w - 102, 9, 'F1');
+    const h = Math.max(26, 12 + lines.length * 12);
+    doc.drawRect(x0, doc.y, w, h, { fill: COLORS.archCream, stroke: COLORS.archCreamBorder, lineWidth: 0.75 });
+    doc.drawRect(x0, doc.y, 74, h, { fill: COLORS.rustSignal });
+    doc.drawText('MEMO', x0 + 37, doc.y + h / 2 + 3, {
+      font: 'F2',
+      size: 8.5,
+      color: COLORS.white,
+      align: 'center',
+    });
     let ny = doc.y + 14;
     for (const l of lines) {
-      doc.drawText(l, x0 + 12, ny, { font: 'F1', size: 9, color: COLORS.ink });
+      doc.drawText(l, x0 + 84, ny, { font: 'F2', size: 9, maxWidth: w - 96, color: COLORS.ironCore });
       ny += 12;
     }
     doc.y += h + 12;
   }
 
-  const drawSectionHeading = (title: string, subtitle?: string) => {
-    doc.ensureSpace(44);
-    doc.drawText(title.toUpperCase(), x0, doc.y + 12, { font: 'F2', size: 10.5, color: COLORS.brandGreen });
+  // Solid Split-Block Section Heading
+  const drawSectionHeading = (title: string, subtitle?: string, accent: Rgb = COLORS.industrialAqua) => {
+    doc.ensureSpace(46);
+    const barH = 24;
+    doc.drawRect(x0, doc.y, w, barH, { fill: COLORS.ironCore });
+    doc.drawRect(x0, doc.y, 10, barH, { fill: accent });
+    const subW = subtitle ? estimateTextWidth(subtitle, 8, 'F2') + 20 : 0;
+    doc.drawText(title.toUpperCase(), x0 + 18, doc.y + 15.5, {
+      font: 'F2',
+      size: 9.5,
+      minSize: 7.5,
+      maxWidth: w - 28 - subW,
+      color: COLORS.white,
+    });
     if (subtitle) {
-      doc.drawText(subtitle, xRight, doc.y + 12, { font: 'F1', size: 8.5, color: COLORS.muted, align: 'right' });
+      doc.drawText(subtitle, xRight - 10, doc.y + 15.5, {
+        font: 'F2',
+        size: 8,
+        minSize: 6.5,
+        maxWidth: w * 0.48,
+        color: accent,
+        align: 'right',
+      });
     }
-    doc.drawLine(x0, doc.y + 17, xRight, doc.y + 17, { color: COLORS.brandGreen, lineWidth: 1 });
-    doc.y += 24;
+    doc.y += barH + 8;
   };
 
   const drawTable = (
@@ -813,14 +1142,16 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
     const headerH = 20;
     const rowH = 18;
     const renderHeader = () => {
-      doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.brandDark });
+      doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.ironSlate });
       let cx = x0;
       for (const col of columns) {
         const tx = col.align === 'right' ? cx + col.width - 8 : col.align === 'center' ? cx + col.width / 2 : cx + 8;
         doc.drawText(col.header, tx, doc.y + 13, {
           font: 'F2',
           size: 8,
-          color: COLORS.white,
+          minSize: 6,
+          maxWidth: col.width - 12,
+          color: COLORS.archCream,
           align: col.align || 'left',
         });
         cx += col.width;
@@ -841,7 +1172,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
     for (let rIdx = 0; rIdx < rows.length; rIdx++) {
       doc.ensureSpace(rowH + 4, renderHeader);
       if (rIdx % 2 === 1) {
-        doc.drawRect(x0, doc.y, w, rowH, { fill: [0.975, 0.98, 0.975] });
+        doc.drawRect(x0, doc.y, w, rowH, { fill: COLORS.soft });
       }
       doc.drawLine(x0, doc.y + rowH, xRight, doc.y + rowH, { color: COLORS.line, lineWidth: 0.4 });
       let cx = x0;
@@ -850,11 +1181,11 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
         const col = columns[cIdx];
         const cell = row[cIdx] ?? '';
         const tx = col.align === 'right' ? cx + col.width - 8 : col.align === 'center' ? cx + col.width / 2 : cx + 8;
-        const maxChars = Math.max(6, Math.floor(col.width / 5.1));
-        const clipped = cell.length > maxChars ? `${cell.slice(0, maxChars - 2)}..` : cell;
-        doc.drawText(clipped, tx, doc.y + 12.5, {
+        doc.drawText(cell, tx, doc.y + 12.5, {
           font: col.mono ? 'F3' : cIdx === 0 ? 'F2' : 'F1',
           size: 8.5,
+          minSize: 6.5,
+          maxWidth: col.width - 12,
           color: COLORS.ink,
           align: col.align || 'left',
         });
@@ -865,35 +1196,90 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
     doc.y += 12;
   };
 
-  // 1. Executive Summary & Revenue Reconciliation
+  // 1. Executive Summary & Revenue Reconciliation (with Solid Swatch KPI Cards inspired by reference palette)
   if (sections.executiveSummary) {
-    drawSectionHeading('1. Executive Financial Summary', `${analytics.salesCount} Valid Sales  |  ${analytics.cancelledCount} Cancelled`);
+    drawSectionHeading(
+      '1. Executive Financial Summary',
+      `${analytics.salesCount} Valid Sales  |  ${analytics.cancelledCount} Cancelled`,
+      COLORS.heatMarker,
+    );
 
-    const kpis: { label: string; value: string; sub: string }[] = [
-      { label: 'NET COLLECTED SALES', value: formatMoney(analytics.netSales), sub: `Avg Ticket ${formatMoney(analytics.avgOrderValue)}` },
-      { label: 'GROSS BILLED TOTAL', value: formatMoney(analytics.grossTotal), sub: `Subtotal ${formatMoney(analytics.grossSubtotal)}` },
-      { label: 'CARD / CASH SPLIT', value: `${formatMoney(analytics.cardCollected)} / ${formatMoney(analytics.cashCollected)}`, sub: `Cash Due ${formatMoney(analytics.cashDue)}` },
-      { label: 'TAX & TIPS COLLECTED', value: `${formatMoney(analytics.tax)} / ${formatMoney(analytics.totalTips)}`, sub: `${analytics.totalItemsSold} Items Sold` },
+    const kpis: {
+      label: string;
+      value: string;
+      sub: string;
+      bg: Rgb;
+      labelColor: Rgb;
+      valueColor: Rgb;
+      subColor: Rgb;
+    }[] = [
+      {
+        label: 'NET COLLECTED SALES',
+        value: formatMoney(analytics.netSales),
+        sub: `Avg Ticket ${formatMoney(analytics.avgOrderValue)}`,
+        bg: COLORS.ironSlate, // IRON CORE (#222A2A)
+        labelColor: COLORS.heatMarker,
+        valueColor: COLORS.white,
+        subColor: COLORS.mutedLight,
+      },
+      {
+        label: 'GROSS BILLED TOTAL',
+        value: formatMoney(analytics.grossTotal),
+        sub: `Subtotal ${formatMoney(analytics.grossSubtotal)}`,
+        bg: COLORS.industrialAqua, // INDUSTRIAL AQUA (#4FBBBC)
+        labelColor: COLORS.ironCore,
+        valueColor: COLORS.ironCore,
+        subColor: COLORS.ironSlate,
+      },
+      {
+        label: 'CARD / CASH SPLIT',
+        value: `${formatMoney(analytics.cardCollected)} / ${formatMoney(analytics.cashCollected)}`,
+        sub: `Cash Due ${formatMoney(analytics.cashDue)}`,
+        bg: COLORS.heatMarker, // HEAT MARKER (#F39120)
+        labelColor: COLORS.ironCore,
+        valueColor: COLORS.ironCore,
+        subColor: COLORS.ironSlate,
+      },
+      {
+        label: 'TAX & TIPS COLLECTED',
+        value: `${formatMoney(analytics.tax)} / ${formatMoney(analytics.totalTips)}`,
+        sub: `${analytics.totalItemsSold} Items Sold`,
+        bg: COLORS.archCream, // ARCHITECTURAL CREAM (#EFECE1)
+        labelColor: COLORS.rustSignal,
+        valueColor: COLORS.ironCore,
+        subColor: COLORS.ironSlate,
+      },
     ];
 
     const cardGap = 8;
     const cardW = (w - cardGap * 3) / 4;
-    const cardH = 52;
+    const cardInnerW = cardW - 16;
+    const cardH = 56;
     doc.ensureSpace(cardH + 14);
     for (let i = 0; i < kpis.length; i++) {
       const kx = x0 + i * (cardW + cardGap);
-      doc.drawRect(kx, doc.y, cardW, cardH, {
-        fill: i === 0 ? COLORS.brandTint : COLORS.soft,
-        stroke: i === 0 ? COLORS.brandGreen : COLORS.line,
-        lineWidth: 0.75,
+      doc.drawRect(kx, doc.y, cardW, cardH, { fill: kpis[i].bg });
+      doc.drawText(kpis[i].label, kx + 8, doc.y + 15, {
+        font: 'F2',
+        size: 7,
+        minSize: 5.8,
+        maxWidth: cardInnerW,
+        color: kpis[i].labelColor,
       });
-      doc.drawText(kpis[i].label, kx + 8, doc.y + 13, { font: 'F2', size: 7, color: COLORS.muted });
-      doc.drawText(kpis[i].value, kx + 8, doc.y + 30, {
+      doc.drawText(kpis[i].value, kx + 8, doc.y + 33, {
         font: 'F4',
-        size: 10.5,
-        color: i === 0 ? COLORS.brandGreen : COLORS.ink,
+        size: 11,
+        minSize: 7.2,
+        maxWidth: cardInnerW,
+        color: kpis[i].valueColor,
       });
-      doc.drawText(kpis[i].sub, kx + 8, doc.y + 44, { font: 'F1', size: 7.5, color: COLORS.muted });
+      doc.drawText(kpis[i].sub, kx + 8, doc.y + 47, {
+        font: 'F1',
+        size: 7.5,
+        minSize: 6,
+        maxWidth: cardInnerW,
+        color: kpis[i].subColor,
+      });
     }
     doc.y += cardH + 12;
 
@@ -919,7 +1305,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
 
   // 2. Payment Method & Fulfillment Breakdown
   if (sections.paymentAndFulfillment) {
-    drawSectionHeading('2. Payment Method & Fulfillment Breakdown');
+    drawSectionHeading('2. Payment Method & Fulfillment Breakdown', undefined, COLORS.industrialAqua);
     drawTable(
       [
         { header: 'PAYMENT CHANNEL', width: w * 0.34, align: 'left' },
@@ -959,7 +1345,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
 
   // 3. Category Breakdown
   if (sections.categoryBreakdown) {
-    drawSectionHeading('3. Sales by Menu Category');
+    drawSectionHeading('3. Sales by Menu Category', undefined, COLORS.rustSignal);
     drawTable(
       [
         { header: 'CATEGORY NAME', width: w * 0.42, align: 'left' },
@@ -978,7 +1364,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
 
   // 4. Item Breakdown
   if (sections.itemBreakdown) {
-    drawSectionHeading('4. Menu Item Sales Performance', `Top ${Math.min(analytics.itemBreakdown.length, 30)} items`);
+    drawSectionHeading('4. Menu Item Sales Performance', `Top ${Math.min(analytics.itemBreakdown.length, 30)} items`, COLORS.heatMarker);
     drawTable(
       [
         { header: 'MENU ITEM', width: w * 0.32, align: 'left' },
@@ -1002,7 +1388,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
     const peakNote = analytics.peakHour
       ? `Peak Hour: ${analytics.peakHour.label.toUpperCase()} (${analytics.peakHour.orders} orders, ${formatMoney(analytics.peakHour.revenue)})`
       : 'No peak hour recorded';
-    drawSectionHeading('5. Day-of-Week & Peak Rush Hour Breakdown', peakNote);
+    drawSectionHeading('5. Day-of-Week & Peak Rush Hour Breakdown', peakNote, COLORS.industrialAqua);
 
     drawTable(
       [
@@ -1040,7 +1426,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
 
   // 6. Promo Codes & Driver / Cash Reconciliation
   if (sections.promoAndDriver) {
-    drawSectionHeading('6. Promo Codes, Drivers & Cash Reconciliation');
+    drawSectionHeading('6. Promo Codes, Drivers & Cash Reconciliation', undefined, COLORS.rustSignal);
     if (analytics.promoBreakdown.length > 0) {
       drawTable(
         [
@@ -1098,7 +1484,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
   // 7. Itemized Order Ledger
   if (sections.orderLedger) {
     const ledgerOrders = input.orders.filter((o) => o.status !== 'payment_pending').slice(0, 120);
-    drawSectionHeading('7. Itemized Order Ledger', `Showing ${ledgerOrders.length} orders`);
+    drawSectionHeading('7. Itemized Order Ledger', `Showing ${ledgerOrders.length} orders`, COLORS.emeraldSolid);
     drawTable(
       [
         { header: 'ORDER #', width: w * 0.13, align: 'left', mono: true },
@@ -1124,7 +1510,7 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
     );
   }
 
-  doc.addPageFooters(`${reportTitle}  |  ${input.rangeLabel}  |  Powered by OrderFlow`);
+  doc.addPageFooters(`${reportTitle.toUpperCase()}  |  ${input.rangeLabel.toUpperCase()}  |  POWERED BY ORDERFLOW`);
   return doc.buildBytes();
 }
 
