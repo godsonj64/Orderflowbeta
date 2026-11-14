@@ -8,12 +8,13 @@ import { useAuth } from '../context/AuthContext';
 import { useOrderActions } from '../hooks/useOrderActions';
 import { StoreControls } from '../components/StoreControls';
 import { ConfirmDialog, PageSpinner, Sheet, Spinner, adminInput } from '../components/ui';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, isNoDatabaseError } from '../lib/api';
+import { ordersFromSnapshot } from '../lib/orderList';
 import { formatMoney, fromCents, toCents } from '../lib/money';
 import { orderCode } from '../lib/ids';
 import { formatDateTime, timeAgo, toMillis } from '../lib/dates';
 import { ACTIVE_STATUSES, STATUS_LABEL, STATUS_STYLE, isCashDue, nextStep, paymentSummary } from '../lib/orderStatus';
-import { reportError } from '../utils/errorHandling';
+import { friendlyError, reportError } from '../utils/errorHandling';
 
 const AdminFinancials = lazy(() => import('../components/AdminFinancials').then((m) => ({ default: m.AdminFinancials })));
 
@@ -242,10 +243,11 @@ export const AdminDashboard: React.FC = () => {
   useEffect(() => {
     // Live window of the last 30 days (bounded to 500 recent orders so rush-hour volume stays fast).
     const since = Timestamp.fromMillis(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const cache = new Map<string, Order>();
     const unsub = onSnapshot(
       query(collection(db, 'orders'), where('createdAt', '>=', since), orderBy('createdAt', 'desc'), limit(500)),
       (snap) => {
-        setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Order));
+        setOrders(ordersFromSnapshot(snap, cache));
         setLoading(false);
       },
       (err) => {
@@ -341,10 +343,13 @@ export const AdminDashboard: React.FC = () => {
     setWorking(true);
     try {
       try {
+        // The server cancels, refunds card payments and corrects the sales statistics.
         const res = await api.cancel(cancelOrder.id, cancelReason.trim() || undefined);
         toast.success(res.refunded ? `Cancelled and refunded #${orderCode(cancelOrder)}` : `Cancelled #${orderCode(cancelOrder)}`);
-      } catch {
-        // Direct Firestore fallback for staff cancellation
+      } catch (err) {
+        // Only when the server has no database access (basic mode) is the order cancelled
+        // directly. A failed refund or any other server answer must be shown, not bypassed.
+        if (!isNoDatabaseError(err)) throw err;
         await updateDoc(doc(db, 'orders', cancelOrder.id), {
           status: 'cancelled',
           cancelledBy: 'staff',
@@ -356,7 +361,12 @@ export const AdminDashboard: React.FC = () => {
       setCancelOrder(null);
       setCancelReason('');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not cancel the order.');
+      toast.error(
+        (err as { code?: string })?.code === 'permission-denied'
+          ? 'This order was paid by card. It can only be cancelled once the server can refund it.'
+          : friendlyError(err, 'Could not cancel the order.'),
+        { duration: 7000 },
+      );
     } finally {
       setWorking(false);
     }

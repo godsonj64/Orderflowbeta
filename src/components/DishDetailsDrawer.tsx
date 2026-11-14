@@ -219,10 +219,10 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
               <button
                 type="button"
                 onClick={onClose}
-                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-card/85 text-ink backdrop-blur-md shadow-xs flex items-center justify-center hover:bg-card transition"
+                className="absolute top-2.5 right-2.5 w-10 h-10 rounded-full bg-card/85 text-ink backdrop-blur-md shadow-xs flex items-center justify-center hover:bg-card transition"
                 aria-label="Close"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
           </div>
@@ -239,7 +239,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                   type="button"
                   onClick={() => toggleFavorite(live.id)}
                   aria-label={isFav ? 'Remove from favorites' : 'Save to favorites'}
-                  className="w-9 h-9 rounded-full bg-soft flex items-center justify-center shrink-0 transition active:scale-90"
+                  className="w-10 h-10 rounded-full bg-soft flex items-center justify-center shrink-0 transition active:scale-90"
                 >
                   <Heart size={18} className={isFav ? 'fill-red-500 text-red-500' : 'text-muted'} />
                 </button>
@@ -255,11 +255,11 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                     onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                     disabled={quantity <= 1}
                     aria-label="Decrease quantity"
-                    className="w-7 h-7 rounded-full bg-soft text-ink flex items-center justify-center disabled:opacity-40 transition active:scale-90"
+                    className="w-10 h-10 rounded-full bg-soft text-ink flex items-center justify-center disabled:opacity-40 transition active:scale-90"
                   >
-                    <Minus size={14} strokeWidth={2.5} />
+                    <Minus size={16} strokeWidth={2.5} />
                   </button>
-                  <span className="min-w-4 text-center font-bold text-sm font-mono tabular-nums" aria-live="polite">
+                  <span className="min-w-5 text-center font-bold text-base font-mono tabular-nums" aria-live="polite">
                     {quantity}
                   </span>
                   <button
@@ -267,9 +267,9 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                     onClick={() => setQuantity((q) => Math.min(MAX_LINE_QUANTITY, q + 1))}
                     disabled={quantity >= MAX_LINE_QUANTITY}
                     aria-label="Increase quantity"
-                    className="w-7 h-7 rounded-full bg-brand text-on-brand flex items-center justify-center disabled:opacity-40 transition active:scale-90"
+                    className="w-10 h-10 rounded-full bg-brand text-on-brand flex items-center justify-center disabled:opacity-40 transition active:scale-90"
                   >
-                    <Plus size={14} strokeWidth={2.5} />
+                    <Plus size={16} strokeWidth={2.5} />
                   </button>
                 </div>
 
@@ -299,6 +299,7 @@ export const DishDetailsDrawer: React.FC<DishDetailsDrawerProps> = ({ item, onCl
                 value={notes}
                 onChange={(e) => setNotes(e.target.value.slice(0, 200))}
                 rows={2}
+                enterKeyHint="done"
                 placeholder="e.g. no onions, sauce on the side"
                 className="w-full rounded-2xl border border-line bg-soft/60 focus:bg-card px-3.5 py-2.5 text-sm placeholder:text-muted focus:ring-2 focus:ring-brand/20 focus:border-brand outline-none resize-none transition"
               />

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, doc, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { Maximize, Sun } from 'lucide-react';
@@ -6,6 +6,8 @@ import { db } from '../firebase';
 import type { Order, OrderStatus } from '../types';
 import { useStore } from '../context/StoreContext';
 import { useOrderActions } from '../hooks/useOrderActions';
+import { useWakeLock } from '../hooks/useWakeLock';
+import { ordersFromSnapshot } from '../lib/orderList';
 import { StoreControls } from '../components/StoreControls';
 import { ConfirmDialog, Sheet, Toggle } from '../components/ui';
 import { orderCode } from '../lib/ids';
@@ -126,7 +128,7 @@ const Ticket = React.memo(function Ticket({
         <div className="p-3.5 pt-0">
           <button
             onClick={() => onAction(order)}
-            className={`w-full min-h-[44px] py-3 rounded-xl font-extrabold text-xs sm:text-sm uppercase tracking-wider transition active:scale-[0.98] ${
+            className={`w-full min-h-[52px] py-3 rounded-xl font-extrabold text-sm uppercase tracking-wider transition active:scale-[0.98] ${
               order.status === 'new'
                 ? 'bg-sky-500 hover:bg-sky-600 text-white'
                 : order.status === 'ready'
@@ -143,33 +145,28 @@ const Ticket = React.memo(function Ticket({
   );
 });
 
-function useWakeLock() {
-  const [wanted, setWanted] = useState(false);
-  const lock = useRef<any>(null);
-  const supported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
+const AWAKE_KEY = 'orderflow_kds_awake';
 
-  useEffect(() => {
-    if (!wanted || !supported) return;
-    let cancelled = false;
-    const acquire = async () => {
+/** "Keep awake" is remembered per device, so a kitchen tablet stays on after a reload. */
+function useKeepAwake() {
+  const [wanted, setWanted] = useState(() => {
+    try {
+      return localStorage.getItem(AWAKE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const supported = useWakeLock(wanted, () => setWanted(false));
+  const toggle = () =>
+    setWanted((w) => {
       try {
-        lock.current = await (navigator as any).wakeLock.request('screen');
+        localStorage.setItem(AWAKE_KEY, w ? '0' : '1');
       } catch {
-        if (!cancelled) setWanted(false);
+        // ignore
       }
-    };
-    const onVisible = () => document.visibilityState === 'visible' && acquire();
-    acquire();
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
-      lock.current?.release?.().catch(() => undefined);
-      lock.current = null;
-    };
-  }, [wanted, supported]);
-
-  return { supported, on: wanted, toggle: () => setWanted((w) => !w) };
+      return !w;
+    });
+  return { supported, on: wanted, toggle };
 }
 
 export const KitchenDashboard: React.FC = () => {
@@ -180,13 +177,14 @@ export const KitchenDashboard: React.FC = () => {
   const [tab, setTab] = useState<OrderStatus>('new');
   const [stockOpen, setStockOpen] = useState(false);
   const [cashOrder, setCashOrder] = useState<Order | null>(null);
-  const wake = useWakeLock();
+  const wake = useKeepAwake();
   const prep = prepMinutes(profile);
 
   useEffect(() => {
+    const cache = new Map<string, Order>();
     const unsub = onSnapshot(
       query(collection(db, 'orders'), where('status', 'in', ['new', 'confirmed', 'preparing', 'ready']), limit(200)),
-      (snap) => setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Order)),
+      (snap) => setOrders(ordersFromSnapshot(snap, cache)),
       (err) => reportError(err, 'kitchen-orders'),
     );
     return () => unsub();
@@ -292,7 +290,7 @@ export const KitchenDashboard: React.FC = () => {
             <button
               key={c.id}
               onClick={() => setTab(c.id)}
-              className={`min-h-[40px] flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold transition whitespace-nowrap ${
+              className={`min-h-[44px] flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold transition whitespace-nowrap ${
                 active ? 'bg-[#EADDC5] text-[#151B15] shadow-xs' : 'text-[#9EB09E] hover:text-[#FAF6F0]'
               }`}
             >

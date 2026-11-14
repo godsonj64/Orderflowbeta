@@ -261,9 +261,15 @@ export interface Order {
   driverId?: string;
   driverName?: string;
   deliveryStatus?: 'pending' | 'assigned' | 'picked_up' | 'delivered';
+  /**
+   * Legacy: photo stored inside the order. New photos are saved in
+   * orders/{id}/proof/photo so order lists stay small (see src/lib/proof.ts).
+   */
   proofOfDeliveryImage?: string;
   deliveryLocation?: GeoPoint;
   driverLocation?: GeoPoint;
+  /** Set by the server: lets a repeated checkout request return this order instead of creating a second one. */
+  checkoutKey?: string;
   createdAt: any; // Firestore Timestamp
   updatedAt?: any;
 }

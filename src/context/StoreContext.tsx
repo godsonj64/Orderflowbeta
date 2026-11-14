@@ -6,7 +6,7 @@ import { DEFAULT_CATEGORIES, DEFAULT_ITEMS, DEFAULT_RESTAURANT_PROFILE } from '.
 import { getStoreStatus, type StoreStatus } from '../lib/storeStatus';
 import { ensureFontLoaded, resolveTheme, type ResolvedTheme } from '../lib/theme';
 import type { Catalog } from '../lib/pricing';
-import { api } from '../lib/api';
+import { api, type OrderingMode } from '../lib/api';
 import { OperationType, reportError } from '../utils/errorHandling';
 
 interface StoreContextValue {
@@ -30,6 +30,12 @@ interface StoreContextValue {
   cashPaymentsAvailable: boolean;
   /** False when the API server could not be reached. */
   serverReachable: boolean;
+  /**
+   * How orders are placed. "server": priced and created by the server (cards, promos,
+   * refunds). "direct": the server has no database access, so only unpaid cash orders
+   * can be placed (see SETUP.md). null until the server has answered.
+   */
+  orderingMode: OrderingMode | null;
 }
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -52,6 +58,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [serverCard, setServerCard] = useState(false);
   const [serverReachable, setServerReachable] = useState(true);
+  const [orderingMode, setOrderingMode] = useState<OrderingMode | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -116,14 +123,54 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [usingDefaultCatalog, rawItems],
   );
 
+  // What the server can do right now. Phones drop off the network all the time, so a
+  // failed check is retried (with backoff, and immediately when the connection or the
+  // tab comes back) instead of leaving checkout blocked until a manual reload.
   useEffect(() => {
-    api
-      .config()
-      .then((cfg) => {
-        setServerCard(!!cfg.cardPayments);
-        setServerReachable(true);
-      })
-      .catch(() => setServerReachable(false));
+    let cancelled = false;
+    let timer: number | undefined;
+    let failures = 0;
+    let loaded = false;
+    let inFlight = false;
+
+    const load = () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      window.clearTimeout(timer);
+      api
+        .config()
+        .then((cfg) => {
+          if (cancelled) return;
+          loaded = true;
+          failures = 0;
+          setServerCard(!!cfg.cardPayments);
+          setOrderingMode(cfg.ordering === 'direct' ? 'direct' : 'server');
+          setServerReachable(true);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          loaded = false;
+          failures += 1;
+          setServerReachable(false);
+          timer = window.setTimeout(load, Math.min(30_000, 2000 * 2 ** Math.min(failures, 4)));
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const retryNow = () => {
+      if (!loaded && document.visibilityState === 'visible') load();
+    };
+
+    load();
+    window.addEventListener('online', retryNow);
+    document.addEventListener('visibilitychange', retryNow);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('online', retryNow);
+      document.removeEventListener('visibilitychange', retryNow);
+    };
   }, []);
 
   // Re-evaluate "open now" every 30 seconds.
@@ -193,6 +240,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cardPaymentsAvailable: serverCard && !!STRIPE_PUBLIC_KEY && profile?.isCardPaymentEnabled !== false,
       cashPaymentsAvailable: profile?.isCashPaymentEnabled === true,
       serverReachable,
+      orderingMode,
     }),
     [
       profile,
@@ -209,6 +257,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       theme,
       serverCard,
       serverReachable,
+      orderingMode,
     ],
   );
 

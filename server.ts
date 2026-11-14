@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import Stripe from 'stripe';
 import path from 'path';
+import fs from 'fs';
+import zlib from 'zlib';
 import admin from 'firebase-admin';
 import {
   FieldValue,
@@ -12,12 +14,6 @@ import {
   type Transaction,
 } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
-import { initializeApp as initClientApp } from 'firebase/app';
-import {
-  getFirestore as getClientFirestore,
-  doc as clientDoc,
-  getDoc as getClientDoc,
-} from 'firebase/firestore';
 import {
   isManagerRole,
   isStaffRole,
@@ -44,6 +40,7 @@ import {
 import { effectiveHours, getStoreStatus, prepMinutes, scheduleDaysAhead } from './src/lib/storeStatus';
 import { formatAbsoluteSlot, isValidScheduledTime } from './src/lib/hours';
 import { generateOrderCode } from './src/lib/ids';
+import { toMillis } from './src/lib/dates';
 import { fromCents, roundMoney, toCents } from './src/lib/money';
 import { sanitizeGeoPoint } from './src/lib/geo';
 import { DEFAULT_CATEGORIES, DEFAULT_ITEMS, DEFAULT_RESTAURANT_PROFILE } from './src/lib/defaultStore';
@@ -52,17 +49,38 @@ import { DEFAULT_CATEGORIES, DEFAULT_ITEMS, DEFAULT_RESTAURANT_PROFILE } from '.
 // Setup
 // ---------------------------------------------------------------------------
 
-const firebaseApp = admin.initializeApp({ projectId: firebaseConfig.projectId });
+/**
+ * Credentials for the Firebase Admin SDK. On Google Cloud (Cloud Run, App Hosting, ...)
+ * Application Default Credentials are found automatically. Anywhere else, put a
+ * service-account key (the JSON, or base64 of the JSON) in FIREBASE_SERVICE_ACCOUNT.
+ */
+function adminCredential(): admin.credential.Credential | undefined {
+  const raw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+  if (!raw) return undefined;
+  try {
+    return admin.credential.cert(JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8')));
+  } catch (err: any) {
+    console.error('[server] FIREBASE_SERVICE_ACCOUNT could not be read (expected the service-account JSON or its base64):', err?.message);
+    return undefined;
+  }
+}
+
+const credential = adminCredential();
+const firebaseApp = admin.initializeApp({ projectId: firebaseConfig.projectId, ...(credential ? { credential } : {}) });
 const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 db.settings({ ignoreUndefinedProperties: true });
-
-const clientApp = initClientApp(firebaseConfig, 'server-web-client');
-const clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
 
 const PORT = Number(process.env.PORT) || 3000;
 const CURRENCY = 'usd';
 const MIN_CARD_CHARGE_CENTS = 50; // Stripe minimum for USD
 const MAX_OPEN_UNPAID_CASH_ORDERS = 3;
+/** A repeated checkout request (lost response, double tap) within this window returns the same order. */
+const CHECKOUT_RETRY_WINDOW_MS = 30 * 60_000;
+/** Unpaid card checkouts are verified with Stripe after this long ... */
+const PENDING_PAYMENT_CHECK_AFTER_MS = 2 * 60_000;
+/** ... and cancelled (payment intent included) once they are this old. */
+const PENDING_PAYMENT_EXPIRE_AFTER_MS = 45 * 60_000;
+const PENDING_PAYMENT_SWEEP_EVERY_MS = 3 * 60_000;
 /** Mirrors the bootstrap admin in firestore.rules. Override with ADMIN_EMAILS="a@x.com,b@y.com". */
 const BOOTSTRAP_ADMINS = (process.env.ADMIN_EMAILS || 'godsonj64@gmail.com,godsonchristy25@gmail.com')
   .split(',')
@@ -77,6 +95,56 @@ class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Error code the storefront understands as "this server cannot use the database". */
+const NO_DATABASE = 'SERVER_NO_DATABASE';
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * Whether the Admin SDK can actually use Firestore. Without it the server cannot price,
+ * create or update orders, so the storefront falls back to "basic mode" (unpaid cash
+ * orders written by the browser under firestore.rules). Cached; refreshed in the
+ * background so /api/config stays fast.
+ */
+let dbAccess: { ok: boolean; at: number } | null = null;
+let dbProbe: Promise<boolean> | null = null;
+function hasDatabaseAccess(): Promise<boolean> {
+  const fresh = dbAccess && Date.now() - dbAccess.at < (dbAccess.ok ? 5 * 60_000 : 20_000);
+  if (!fresh && !dbProbe) {
+    dbProbe = withTimeout(db.doc('restaurant/profile').get(), 8000)
+      .then(
+        () => true,
+        (err) => {
+          if (dbAccess?.ok !== false) {
+            console.error('[server] The Firebase Admin SDK cannot reach Firestore. Orders will run in basic (cash-only) mode until credentials are configured.', err?.message);
+          }
+          return false;
+        },
+      )
+      .then((ok) => {
+        if (ok && dbAccess?.ok === false) console.log('[server] Firestore access restored: server-side ordering is active again.');
+        dbAccess = { ok, at: Date.now() };
+        dbProbe = null;
+        return ok;
+      });
+  }
+  return dbAccess ? Promise.resolve(dbAccess.ok) : dbProbe!;
 }
 
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
@@ -221,13 +289,13 @@ async function finalizePaidOrder(orderId: string, pi: Stripe.PaymentIntent): Pro
   if (pi.status !== 'succeeded') throw new HttpError(409, 'Payment has not completed yet.');
   if (pi.metadata?.orderId !== orderId) throw new HttpError(409, 'This payment does not belong to this order.');
 
-  return db.runTransaction(async (tx) => {
+  const { order, lateFor } = await db.runTransaction(async (tx) => {
     const ref = ordersCol().doc(orderId);
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpError(404, 'Order not found.');
     const order = { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
     if (order.paymentStatus === 'paid' || order.paymentStatus === 'refunded' || order.paymentStatus === 'partially_refunded') {
-      return order;
+      return { order, lateFor: null };
     }
     if (pi.amount !== toCents(order.total) || pi.currency !== CURRENCY) {
       console.error(`[payments] Amount mismatch for order ${orderId}: intent=${pi.amount} ${pi.currency}, order=${toCents(order.total)}`);
@@ -243,18 +311,50 @@ async function finalizePaidOrder(orderId: string, pi: Stripe.PaymentIntent): Pro
       updatedAt: serverTimestamp(),
     });
     if (stillActive) writeStats(tx, order, targets, 1);
-    else console.warn(`[payments] Order ${orderId} was ${order.status} when its payment succeeded; staff may need to refund it.`);
-    return { ...order, status: stillActive ? 'new' : order.status, paymentStatus: 'paid' as const };
+    const paid: Order = { ...order, status: stillActive ? 'new' : order.status, paymentStatus: 'paid', paymentIntentId: pi.id };
+    return { order: paid, lateFor: stillActive ? null : order.status };
   });
+
+  // The payment arrived after the order was already cancelled (e.g. the customer paid
+  // in a second tab after the checkout was abandoned). Nobody is going to cook it, so
+  // give the money straight back instead of waiting for staff to notice.
+  if (lateFor === 'cancelled') {
+    try {
+      await refundCardPayment(order, pi.amount, `late-${order.id}`, 'system');
+      await ordersCol().doc(order.id).update({ paymentStatus: 'refunded', refundAmount: order.total, updatedAt: serverTimestamp() });
+      console.warn(`[payments] Order ${orderId} was already cancelled when its payment succeeded; the payment was refunded automatically.`);
+      return { ...order, paymentStatus: 'refunded', refundAmount: order.total };
+    } catch (err: any) {
+      console.error(`[payments] Order ${orderId} was cancelled before its payment succeeded and the automatic refund failed. Refund it from the dashboard.`, err?.message);
+    }
+  } else if (lateFor) {
+    console.warn(`[payments] Order ${orderId} was ${lateFor} when its payment succeeded.`);
+  }
+  return order;
 }
 
-/** Cancels an unpaid card checkout (customer closed the payment sheet or retried). */
-async function abandonPendingOrder(orderId: string, user: AuthedUser) {
-  const { ref, order } = await loadOrder(orderId);
-  assertCanAccess(order, user);
+interface PendingOutcome {
+  status: Order['status'];
+  paymentStatus?: Order['paymentStatus'];
+  processing?: boolean;
+}
+
+/**
+ * Resolves a card checkout that is still waiting for payment:
+ *  - paid in the meantime  -> the order is finalized and sent to the kitchen
+ *  - bank still processing -> left alone
+ *  - otherwise, when `cancel` is set, the PaymentIntent and the order are cancelled.
+ * Used when a customer closes the payment sheet or retries, and by the periodic sweep.
+ */
+async function settlePendingOrder(
+  order: Order,
+  opts: { cancel: boolean; by: 'customer' | 'system'; reason: string },
+): Promise<PendingOutcome> {
   if (order.status !== 'payment_pending') return { status: order.status, paymentStatus: order.paymentStatus };
 
-  if (order.paymentIntentId && stripeEnabled()) {
+  if (order.paymentIntentId) {
+    // Without the Stripe key the payment cannot be verified: never cancel blindly.
+    if (!stripeEnabled()) return { status: order.status, paymentStatus: order.paymentStatus };
     const stripe = getStripe();
     let pi = await stripe.paymentIntents.retrieve(order.paymentIntentId);
     if (pi.status === 'succeeded') {
@@ -262,10 +362,12 @@ async function abandonPendingOrder(orderId: string, user: AuthedUser) {
       return { status: paid.status, paymentStatus: paid.paymentStatus };
     }
     if (pi.status === 'processing') return { status: order.status, paymentStatus: 'pending', processing: true };
+    if (!opts.cancel) return { status: order.status, paymentStatus: order.paymentStatus };
     if (pi.status !== 'canceled') {
       try {
         pi = await stripe.paymentIntents.cancel(pi.id);
       } catch (err) {
+        // Cancelling fails when the payment went through at the same moment.
         pi = await stripe.paymentIntents.retrieve(pi.id);
         if (pi.status === 'succeeded') {
           const paid = await finalizePaidOrder(order.id, pi);
@@ -274,23 +376,71 @@ async function abandonPendingOrder(orderId: string, user: AuthedUser) {
         throw err;
       }
     }
+  } else if (!opts.cancel) {
+    return { status: order.status, paymentStatus: order.paymentStatus };
   }
 
+  const ref = ordersCol().doc(order.id);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (snap.get('status') !== 'payment_pending') return;
     tx.update(ref, {
       status: 'cancelled',
       paymentStatus: 'failed',
-      cancelledBy: 'customer',
-      cancelReason: 'Checkout was not completed',
+      cancelledBy: opts.by,
+      cancelReason: opts.reason,
       updatedAt: serverTimestamp(),
     });
   });
   return { status: 'cancelled', paymentStatus: 'failed' };
 }
 
-async function refundCardPayment(order: Order, amountCents: number, idempotencyKey: string, staffUid: string) {
+/** Cancels an unpaid card checkout (customer closed the payment sheet or retried). */
+async function abandonPendingOrder(orderId: string, user: AuthedUser) {
+  const { order } = await loadOrder(orderId);
+  assertCanAccess(order, user);
+  return settlePendingOrder(order, { cancel: true, by: 'customer', reason: 'Checkout was not completed' });
+}
+
+/**
+ * Safety net for card checkouts that never reported back: the customer paid but closed
+ * the page before the confirmation (and no webhook is configured), or simply walked
+ * away. Paid orders are sent to the kitchen; stale unpaid ones are cancelled so they do
+ * not pile up. Runs at most every few minutes, piggybacking on API traffic so it also
+ * works on hosts that only give the server CPU time while it handles requests.
+ */
+let lastSweepAt = 0;
+let sweepRunning = false;
+async function sweepPendingPayments() {
+  const now = Date.now();
+  if (sweepRunning || now - lastSweepAt < PENDING_PAYMENT_SWEEP_EVERY_MS || !dbAccess?.ok) return;
+  sweepRunning = true;
+  lastSweepAt = now;
+  try {
+    const snap = await ordersCol().where('status', '==', 'payment_pending').limit(40).get();
+    for (const doc of snap.docs) {
+      const order = { id: doc.id, ...(doc.data() as Omit<Order, 'id'>) };
+      const age = now - toMillis(order.createdAt, now);
+      if (age < PENDING_PAYMENT_CHECK_AFTER_MS) continue;
+      try {
+        const outcome = await settlePendingOrder(order, {
+          cancel: age > PENDING_PAYMENT_EXPIRE_AFTER_MS,
+          by: 'system',
+          reason: 'Payment was not completed',
+        });
+        if (outcome.status === 'new') console.log(`[payments] Recovered paid order ${order.id} that never confirmed from the browser.`);
+      } catch (err: any) {
+        console.warn(`[payments] Could not settle pending order ${order.id}:`, err?.message);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[payments] Pending-payment sweep failed:', err?.message);
+  } finally {
+    sweepRunning = false;
+  }
+}
+
+async function refundCardPayment(order: Pick<Order, 'id' | 'paymentIntentId'>, amountCents: number, idempotencyKey: string, staffUid: string) {
   if (!order.paymentIntentId || order.paymentIntentId.startsWith('mock_')) return false;
   const stripe = getStripe();
   try {
@@ -331,7 +481,16 @@ async function startServer() {
 
       if (event.type === 'payment_intent.succeeded') {
         const pi = event.data.object as Stripe.PaymentIntent;
-        if (pi.metadata?.orderId) await finalizePaidOrder(pi.metadata.orderId, pi);
+        if (pi.metadata?.orderId) {
+          try {
+            await finalizePaidOrder(pi.metadata.orderId, pi);
+          } catch (err) {
+            // Unknown order / mismatched amount will never succeed: acknowledge the event
+            // so Stripe stops retrying. Anything else (e.g. database hiccup) is retried.
+            if (!(err instanceof HttpError) || ![404, 409].includes(err.status)) throw err;
+            console.error(`[webhook] Ignoring payment ${pi.id} for order ${pi.metadata.orderId}: ${err.message}`);
+          }
+        }
       } else if (event.type === 'charge.refunded') {
         // Keep orders in sync when refunds are issued from the Stripe dashboard.
         const charge = event.data.object as Stripe.Charge;
@@ -360,58 +519,36 @@ async function startServer() {
   // Public endpoints
   // -------------------------------------------------------------------------
 
-  let health: { at: number; firestore: 'ok' | 'error' } | null = null;
+  // Opportunistic maintenance: settle card checkouts that never reported back.
+  app.use('/api', (_req, _res, next) => {
+    void sweepPendingPayments();
+    next();
+  });
+
   app.get(
     '/api/health',
     route(async (_req, res) => {
-      if (!health || Date.now() - health.at > 60_000) {
-        try {
-          await Promise.race([
-            getClientDoc(clientDoc(clientDb, 'restaurant', 'profile')),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-          ]);
-          health = { at: Date.now(), firestore: 'ok' };
-        } catch (err: any) {
-          console.error('[health] Firestore is not reachable:', err?.message);
-          health = { at: Date.now(), firestore: 'error' };
-        }
-      }
+      const database = await hasDatabaseAccess();
+      res.set('Cache-Control', 'no-store');
       res.json({
         status: 'ok',
-        firestore: health.firestore,
+        // "ok" means the Admin SDK can read and write: server-side checkout is active.
+        firestore: database ? 'ok' : 'error',
+        ordering: database ? 'server' : 'direct',
         cardPayments: stripeEnabled(),
         webhooks: !!process.env.STRIPE_WEBHOOK_SECRET,
       });
     }),
   );
 
-  app.get('/api/config', (_req, res) => {
-    res.json({ cardPayments: stripeEnabled() });
-  });
-
-  app.post(
-    '/api/create-payment-intent',
-    route(async (req, res) => {
-      const user = await authenticate(req);
-      const amountCents = Math.round(Number(req.body?.amountCents));
-      const orderId = str(req.body?.orderId, 64);
-      if (!amountCents || amountCents < MIN_CARD_CHARGE_CENTS) {
-        throw new HttpError(400, 'Invalid payment amount.');
-      }
-      if (!orderId) {
-        throw new HttpError(400, 'Invalid order id.');
-      }
-      const pi = await getStripe().paymentIntents.create(
-        {
-          amount: amountCents,
-          currency: CURRENCY,
-          description: `Order #${orderId}`,
-          metadata: { orderId, uid: user.uid },
-          automatic_payment_methods: { enabled: true },
-        },
-        { idempotencyKey: `order-${orderId}` },
-      );
-      res.json({ clientSecret: pi.client_secret, paymentIntentId: pi.id });
+  // What the storefront may offer right now. Card payments need the database: the
+  // server must be able to create the order and record the payment.
+  app.get(
+    '/api/config',
+    route(async (_req, res) => {
+      const database = await hasDatabaseAccess();
+      res.set('Cache-Control', 'no-store');
+      res.json({ cardPayments: stripeEnabled() && database, ordering: database ? 'server' : 'direct' });
     }),
   );
 
@@ -427,21 +564,61 @@ async function startServer() {
     if (cachedProfile && Date.now() - cachedProfile.at < 3000 && cachedProfile.data) {
       return cachedProfile.data;
     }
-    try {
-      const snap = await db.doc('restaurant/profile').get();
-      const data = snap.exists ? (snap.data() as RestaurantProfile) : DEFAULT_RESTAURANT_PROFILE;
-      cachedProfile = { at: Date.now(), data };
-      return data;
-    } catch {
-      try {
-        const snap = await getClientDoc(clientDoc(clientDb, 'restaurant', 'profile'));
-        const data = snap.exists() ? (snap.data() as RestaurantProfile) : DEFAULT_RESTAURANT_PROFILE;
-        cachedProfile = { at: Date.now(), data };
-        return data;
-      } catch {
-        return DEFAULT_RESTAURANT_PROFILE;
+    const snap = await db.doc('restaurant/profile').get();
+    // A store that has not saved its settings yet runs on the same defaults the storefront shows.
+    const data = snap.exists ? (snap.data() as RestaurantProfile) : DEFAULT_RESTAURANT_PROFILE;
+    cachedProfile = { at: Date.now(), data };
+    return data;
+  }
+
+  /** Totals as stored on an order (used when a repeated checkout returns the existing order). */
+  function storedTotals(order: Order) {
+    return {
+      subtotal: order.subtotal ?? 0,
+      discount: order.discountAmount ?? 0,
+      deliveryFee: order.deliveryFee ?? 0,
+      serviceFee: order.serviceFee ?? 0,
+      tax: order.tax ?? 0,
+      restaurantTip: order.restaurantTip ?? 0,
+      deliveryTip: order.deliveryTip ?? 0,
+      total: order.total,
+      totalCents: toCents(order.total),
+      minimumOrderShortfall: 0,
+      freeDeliveryRemaining: null,
+    };
+  }
+
+  /**
+   * Phones lose connections mid-request. When the storefront repeats a checkout with
+   * the same key (it never saw the first answer), return the order that already exists
+   * instead of sending a second ticket to the kitchen.
+   */
+  async function findCheckoutAttempt(uid: string, checkoutKey: string) {
+    const snap = await ordersCol().where('customerId', '==', uid).where('checkoutKey', '==', checkoutKey).limit(5).get();
+    for (const doc of snap.docs) {
+      const order = { id: doc.id, ...(doc.data() as Omit<Order, 'id'>) };
+      if (order.status === 'cancelled') continue;
+      if (Date.now() - toMillis(order.createdAt, Date.now()) > CHECKOUT_RETRY_WINDOW_MS) continue;
+      let status: Order['status'] = order.status;
+      let clientSecret: string | null = null;
+      if (status === 'payment_pending') {
+        if (!order.paymentIntentId) continue; // the payment was never started: place a fresh order
+        const pi = await getStripe().paymentIntents.retrieve(order.paymentIntentId);
+        if (pi.status === 'succeeded') status = (await finalizePaidOrder(order.id, pi)).status;
+        else if (pi.status === 'canceled') continue;
+        else clientSecret = pi.client_secret;
       }
+      return {
+        orderId: order.id,
+        orderNumber: order.orderNumber || order.id,
+        status,
+        paymentMethod: order.paymentMethod || 'card',
+        totals: storedTotals(order),
+        clientSecret,
+        duplicate: true,
+      };
     }
+    return null;
   }
 
   app.post(
@@ -452,7 +629,17 @@ async function startServer() {
       // a stricter limit applies to orders actually created, below.
       rateLimit(`checkout:${user.uid}`, 40, 10 * 60_000);
 
+      if (!(await hasDatabaseAccess())) {
+        throw new HttpError(503, 'Online ordering is temporarily unavailable. Please try again shortly.', { code: NO_DATABASE });
+      }
+
       const body = req.body || {};
+      const checkoutKey = /^[A-Za-z0-9_-]{16,64}$/.test(String(body.checkoutKey || '')) ? String(body.checkoutKey) : '';
+      if (checkoutKey) {
+        const previous = await findCheckoutAttempt(user.uid, checkoutKey);
+        if (previous) return res.json(previous);
+      }
+
       const orderType: OrderType = body.orderType === 'delivery' ? 'delivery' : 'pickup';
       const paymentMethod: PaymentMethod = body.paymentMethod === 'cash' ? 'cash' : 'card';
       const customerName = str(body.customerName, 100) || str(user.profile?.name, 100);
@@ -486,7 +673,6 @@ async function startServer() {
 
       const now = new Date();
       const profile = await loadRestaurantProfile();
-      if (!profile) throw new HttpError(503, 'This store is not set up for online orders yet.');
       const status = getStoreStatus(profile, now, { assumeOpenWithoutTimezone: true });
       const { hours, timeZone } = effectiveHours(profile, { assumeOpenWithoutTimezone: true });
 
@@ -520,16 +706,22 @@ async function startServer() {
 
       const itemIds = [...new Set(lines.map((l) => l.itemId).filter(Boolean))];
       const [mineSnap, itemSnaps] = await Promise.all([
+        // Equality-only filters: served by the automatic single-field indexes.
         paymentMethod === 'cash'
-          ? ordersCol().where('customerId', '==', user.uid).select('paymentMethod', 'paymentStatus', 'status').get()
+          ? ordersCol()
+              .where('customerId', '==', user.uid)
+              .where('paymentMethod', '==', 'cash')
+              .where('paymentStatus', '==', 'pending')
+              .select('status')
+              .get()
           : Promise.resolve(null),
         itemIds.length ? db.getAll(...itemIds.map((id) => db.collection('items').doc(id))) : Promise.resolve([]),
       ]);
 
       if (mineSnap) {
         const openUnpaid = mineSnap.docs
-          .map((d) => d.data() as Pick<Order, 'paymentMethod' | 'paymentStatus' | 'status'>)
-          .filter((o) => o.paymentMethod === 'cash' && o.paymentStatus === 'pending' && !['completed', 'cancelled', 'payment_pending'].includes(o.status));
+          .map((d) => d.data() as Pick<Order, 'status'>)
+          .filter((o) => !['completed', 'cancelled', 'payment_pending'].includes(o.status));
         if (openUnpaid.length >= MAX_OPEN_UNPAID_CASH_ORDERS) {
           throw new HttpError(429, 'You already have several unpaid cash orders open. Please pay for those first or contact the restaurant.');
         }
@@ -636,6 +828,7 @@ async function startServer() {
         scheduledTime: scheduledFor ? formatAbsoluteSlot(scheduledFor, timeZone) : undefined,
         paymentMethod,
         paymentStatus: isFree ? 'paid' : 'pending',
+        checkoutKey: checkoutKey || undefined,
         updatedAt: serverTimestamp(),
       };
 
@@ -659,10 +852,6 @@ async function startServer() {
         if (created) orderRef = ref;
       }
       if (!orderRef) throw new HttpError(503, 'Could not create your order. Please try again.');
-
-      if (deliveryLocation) {
-        liveOrderLocations.set(orderRef.id, { deliveryLocation, updatedAt: Date.now() });
-      }
 
       let clientSecret: string | null = null;
       if (chargeCard) {
@@ -863,79 +1052,6 @@ async function startServer() {
     }),
   );
 
-  // Real-time GPS tracking store (in-memory with bounded TTL eviction + best-effort Firestore persistence)
-  const MAX_LIVE_LOCATIONS = 500;
-  const LIVE_LOCATION_TTL_MS = 6 * 60 * 60 * 1000;
-  const liveOrderLocations = new Map<
-    string,
-    { driverLocation?: ReturnType<typeof sanitizeGeoPoint>; deliveryLocation?: ReturnType<typeof sanitizeGeoPoint>; updatedAt: number }
-  >();
-
-  function pruneLiveLocations(now: number) {
-    if (liveOrderLocations.size <= MAX_LIVE_LOCATIONS) return;
-    for (const [k, v] of liveOrderLocations) {
-      if (now - v.updatedAt > LIVE_LOCATION_TTL_MS) liveOrderLocations.delete(k);
-    }
-    while (liveOrderLocations.size > MAX_LIVE_LOCATIONS) {
-      const oldest = liveOrderLocations.keys().next().value;
-      if (oldest === undefined) break;
-      liveOrderLocations.delete(oldest);
-    }
-  }
-
-  app.get(
-    '/api/orders/:id/location',
-    route(async (req, res) => {
-      await authenticate(req);
-      const id = str(req.params.id, 64);
-      const entry = liveOrderLocations.get(id);
-      res.json({
-        driverLocation: entry?.driverLocation || null,
-        deliveryLocation: entry?.deliveryLocation || null,
-        updatedAt: entry?.updatedAt || null,
-      });
-    }),
-  );
-
-  app.post(
-    '/api/orders/:id/location',
-    route(async (req, res) => {
-      const user = await authenticate(req);
-      rateLimit(`gps:${user.uid}`, 120, 60_000);
-      const id = str(req.params.id, 64);
-      if (!id || id.includes('/')) throw new HttpError(400, 'Invalid order id.');
-
-      const driverLoc = sanitizeGeoPoint(req.body?.driverLocation);
-      const deliveryLoc = sanitizeGeoPoint(req.body?.deliveryLocation);
-      if (!driverLoc && !deliveryLoc) throw new HttpError(400, 'Valid GPS coordinates are required.');
-
-      const now = Date.now();
-      const current = liveOrderLocations.get(id) || { updatedAt: now };
-      const next = {
-        driverLocation: driverLoc || current.driverLocation,
-        deliveryLocation: deliveryLoc || current.deliveryLocation,
-        updatedAt: now,
-      };
-      liveOrderLocations.set(id, next);
-      pruneLiveLocations(now);
-
-      // Best-effort persistence to Firestore if Admin SDK has credentials
-      const patch: Record<string, unknown> = { updatedAt: serverTimestamp() };
-      if (driverLoc) patch.driverLocation = driverLoc;
-      if (deliveryLoc) patch.deliveryLocation = deliveryLoc;
-      ordersCol()
-        .doc(id)
-        .update(patch)
-        .catch(() => undefined);
-
-      res.json({
-        ok: true,
-        driverLocation: next.driverLocation || null,
-        deliveryLocation: next.deliveryLocation || null,
-      });
-    }),
-  );
-
   app.all('/api/*', (_req, res) => {
     res.status(404).json({ error: 'Not found' });
   });
@@ -952,9 +1068,24 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     // dist/ also contains the bundled server; never serve it as a static file.
     app.use((req, res, next) => (/^\/server\.js(\.map)?$/.test(req.path) ? res.status(404).end() : next()));
-    app.use(express.static(distPath, { index: false, maxAge: '1h' }));
+    app.use(compressedAssets(distPath));
+    app.use(
+      express.static(distPath, {
+        index: false,
+        maxAge: '1h',
+        setHeaders: (res, filePath) => {
+          if (isHashedAsset(`/${path.relative(distPath, filePath).split(path.sep).join('/')}`)) {
+            res.setHeader('Cache-Control', IMMUTABLE);
+          }
+        },
+      }),
+    );
+    // A missing build file must be a 404, not the app shell: after a new deploy, tabs
+    // that are still open ask for old chunks and need a clear signal to reload.
+    app.get('/assets/*', (_req, res) => res.status(404).end());
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      // Always revalidate the shell so a new deploy is picked up on the next visit.
+      res.sendFile(path.join(distPath, 'index.html'), { headers: { 'Cache-Control': 'no-cache' } });
     });
   }
 
@@ -963,10 +1094,14 @@ async function startServer() {
     if (err instanceof HttpError) {
       return res.status(err.status).json({ error: err.message, ...(err.details || {}) });
     }
+    if (err?.type === 'entity.parse.failed' || err?.type === 'entity.too.large') {
+      return res.status(err.status || 400).json({ error: 'The request could not be read. Please try again.' });
+    }
     const message = String(err?.message || '');
     if (/default credentials|PERMISSION_DENIED|UNAUTHENTICATED/i.test(message) || err?.code === 7 || err?.code === 16) {
       console.error('[server] Firebase Admin SDK cannot access Firestore. Check the service account credentials.', message);
-      return res.status(503).json({ error: 'Online ordering is temporarily unavailable. Please try again shortly.' });
+      dbAccess = { ok: false, at: Date.now() };
+      return res.status(503).json({ error: 'Online ordering is temporarily unavailable. Please try again shortly.', code: NO_DATABASE });
     }
     console.error('[server] Unhandled error:', err);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -975,7 +1110,97 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
     if (!stripeEnabled()) console.log('[server] STRIPE_SECRET_KEY is not set: card payments are disabled.');
+    // Warm the database check so the first storefront visit does not wait for it.
+    void hasDatabaseAccess().then((ok) => {
+      if (ok) void sweepPendingPayments();
+    });
   });
+  setInterval(() => void sweepPendingPayments(), PENDING_PAYMENT_SWEEP_EVERY_MS).unref();
+}
+
+// ---------------------------------------------------------------------------
+// Static assets
+// ---------------------------------------------------------------------------
+
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+/** Vite content-hashes everything it emits into /assets, e.g. /assets/index-BqX3k2aL.js. */
+const isHashedAsset = (urlPath: string) => /^\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/.test(urlPath);
+
+const COMPRESSIBLE: Record<string, string> = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.map': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+/**
+ * Serves the built JS / CSS compressed (Brotli or gzip). Cloud Run and most Node hosts
+ * do not compress responses, and the app bundle is roughly 4x smaller compressed -
+ * the difference between a snappy and a sluggish first load on mobile data.
+ * Each file is compressed once and kept in memory; build files never change at runtime.
+ */
+function compressedAssets(distPath: string) {
+  const root = path.resolve(distPath);
+  const cache = new Map<string, Promise<Buffer | null>>();
+
+  const compress = (file: string, encoding: 'br' | 'gzip') =>
+    fs.promises.readFile(file).then(
+      (raw) =>
+        new Promise<Buffer | null>((resolve) => {
+          const done = (err: Error | null, out: Buffer) => resolve(err ? null : out);
+          if (encoding === 'br') {
+            zlib.brotliCompress(
+              raw,
+              { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length } },
+              done,
+            );
+          } else {
+            zlib.gzip(raw, { level: 6 }, done);
+          }
+        }),
+      () => null, // not a file: let express.static / the SPA fallback answer
+    );
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const type = COMPRESSIBLE[path.extname(req.path).toLowerCase()];
+    if (!type) return next();
+    const accepts = String(req.headers['accept-encoding'] || '');
+    const encoding = /\bbr\b/.test(accepts) ? 'br' : /\bgzip\b/.test(accepts) ? 'gzip' : null;
+    if (!encoding) return next();
+
+    let relative: string;
+    try {
+      relative = decodeURIComponent(req.path);
+    } catch {
+      return next();
+    }
+    const file = path.resolve(root, `.${path.posix.normalize(`/${relative}`)}`);
+    if (relative.includes('\0') || !file.startsWith(root + path.sep)) return next();
+
+    const key = `${encoding}:${file}`;
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = compress(file, encoding);
+      cache.set(key, pending);
+    }
+    pending.then((body) => {
+      if (!body) {
+        cache.delete(key);
+        return next();
+      }
+      res.setHeader('Content-Type', type);
+      res.setHeader('Content-Encoding', encoding);
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.setHeader('Cache-Control', isHashedAsset(req.path) ? IMMUTABLE : type.startsWith('text/html') ? 'no-cache' : 'public, max-age=3600');
+      res.setHeader('Content-Length', body.length);
+      res.end(req.method === 'HEAD' ? undefined : body);
+    }, next);
+  };
 }
 
 startServer();

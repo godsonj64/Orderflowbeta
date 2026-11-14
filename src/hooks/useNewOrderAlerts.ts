@@ -124,16 +124,16 @@ export function useNewOrderAlerts(enabled: boolean) {
   }, [soundOn]);
 
   const toggleSound = useCallback(() => {
-    setSoundOn((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(SOUND_KEY, next ? '1' : '0');
-      } catch {
-        // ignore
-      }
-      if (next) playChime();
-      return next;
-    });
+    const next = !soundRef.current;
+    soundRef.current = next;
+    setSoundOn(next);
+    try {
+      localStorage.setItem(SOUND_KEY, next ? '1' : '0');
+    } catch {
+      // ignore
+    }
+    // Played from the tap itself: this is what unlocks audio on phones and tablets.
+    if (next) playChime();
   }, []);
 
   return { newOrders, soundOn, toggleSound };

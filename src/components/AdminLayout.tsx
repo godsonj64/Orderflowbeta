@@ -44,7 +44,7 @@ export const AdminLayout: React.FC = () => {
     api
       .health()
       .then(setHealth)
-      .catch(() => setHealth({ status: 'down', firestore: 'error', cardPayments: false, webhooks: false }));
+      .catch(() => setHealth(null));
   }, [isManager]);
 
   const tabs = [
@@ -76,7 +76,13 @@ export const AdminLayout: React.FC = () => {
   if (isManager && health?.firestore === 'error') {
     banners.push({
       tone: 'red',
-      text: "Checkout is offline: the server can't reach your database (Firebase Admin credentials). Customers can't place orders until this is fixed.",
+      text: (
+        <>
+          Basic mode: the server has no access to your database (Firebase Admin credentials), so it cannot price or create orders. Customers can
+          only place <strong>cash</strong> orders; card payments, promo codes, refunds and sales statistics are switched off until this is fixed
+          (see SETUP.md → Environment variables).
+        </>
+      ),
     });
   }
   if (isManager && health && health.firestore === 'ok' && profile) {

@@ -13,7 +13,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth, clearLocalData, db } from '../firebase';
 import { isManagerRole, isStaffRole, type UserProfile, type UserRole } from '../types';
 import { reportError } from '../utils/errorHandling';
 
@@ -176,7 +176,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signOut(auth);
     } catch (error) {
       reportError(error, 'logout');
+      return;
     }
+    // Wipe the orders / profile this account cached on the device (important on shared
+    // kitchen tablets), then reload so the app starts from a clean state.
+    await clearLocalData();
+    window.location.reload();
   }, []);
 
   const value = useMemo<AuthContextType>(() => {

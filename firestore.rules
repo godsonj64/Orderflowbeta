@@ -158,9 +158,11 @@ service cloud.firestore {
              (!('sizeVariants' in data) || (data.sizeVariants is list && data.sizeVariants.size() <= 10));
     }
 
-    // Orders are created by the server, so updates only need to validate the fields
-    // that staff and drivers are allowed to change.
-    function isValidOrderPatch(d) {
+    // Validates the fields staff and drivers are allowed to change. Firestore stops
+    // evaluating a rule after 1,000 expressions, so the expensive checks (GPS points,
+    // photos) only run for fields the request actually changes; everything else is
+    // unchanged data that was validated when it was written.
+    function isValidOrderPatch(d, changed) {
       return d.status in ['payment_pending', 'new', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'completed', 'cancelled'] &&
              (!('paymentStatus' in d) || d.paymentStatus in ['pending', 'paid', 'failed', 'refunded', 'partially_refunded']) &&
              (!('paidAt' in d) || d.paidAt is timestamp) &&
@@ -168,9 +170,10 @@ service cloud.firestore {
              optString(d, 'driverId', 100) &&
              optString(d, 'driverName', 100) &&
              (!('deliveryStatus' in d) || d.deliveryStatus in ['pending', 'assigned', 'picked_up', 'delivered']) &&
-             (!('proofOfDeliveryImage' in d) || (d.proofOfDeliveryImage is string && d.proofOfDeliveryImage.size() <= 1048576)) &&
-             optGeoPoint(d, 'deliveryLocation') &&
-             optGeoPoint(d, 'driverLocation') &&
+             (!changed.hasAny(['proofOfDeliveryImage']) || !('proofOfDeliveryImage' in d) ||
+               (d.proofOfDeliveryImage is string && d.proofOfDeliveryImage.size() <= 1048576)) &&
+             (!changed.hasAny(['deliveryLocation']) || optGeoPoint(d, 'deliveryLocation')) &&
+             (!changed.hasAny(['driverLocation']) || optGeoPoint(d, 'driverLocation')) &&
              optString(d, 'cancelReason', 300) &&
              (!('cancelledBy' in d) || d.cancelledBy in ['customer', 'staff', 'system']) &&
              (!('updatedAt' in d) || d.updatedAt is timestamp);
@@ -225,7 +228,7 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return isAuthenticated() && isValidUser(request.resource.data) &&
              (
-               (request.auth.uid == userId && changed.hasOnly(['name', 'phone', 'savedAddresses', 'totalOrders', 'totalSpent', 'loyaltyPoints', 'lastOrderDate'])) ||
+               (request.auth.uid == userId && changed.hasOnly(['name', 'phone', 'savedAddresses'])) ||
                (isManagerRole(r) && canUpdateRole(r, request.resource.data.role, resource.data.role) &&
                  !changed.hasAny(['uid', 'createdAt']))
              );
@@ -288,9 +291,14 @@ service cloud.firestore {
     // ===============================================================
     // Orders
     //
-    // Orders (and therefore prices) are only created by the server (/api/checkout).
-    // Customers can read their own orders; cancelling, paying and rating go through the
-    // server so refunds and statistics stay consistent.
+    // Orders (and therefore prices) are created by the server (/api/checkout). Customers
+    // can read their own orders; paying, cancelling paid orders and refunds only ever go
+    // through the server so money and statistics stay consistent.
+    //
+    // "Basic mode" exception: when the server has no database access (e.g. a preview
+    // environment without Firebase Admin credentials, see SETUP.md) the storefront may
+    // place UNPAID CASH orders directly. Nothing a customer writes can mark an order as
+    // paid, apply a discount or reach the kitchen as a card order.
     // ===============================================================
 
     // Staff and drivers may record cash payments (and undo a mistaken tap). Card payment
@@ -315,9 +323,26 @@ service cloud.firestore {
                  resource.data.get('paymentStatus', 'pending') in ['paid', 'partially_refunded']));
     }
 
-    function isValidOrderCreate(d) {
+    // Basic mode is only open while the store takes orders and accepts cash. (A store
+    // that has never saved its settings runs on the built-in defaults, which allow cash.)
+    function cashOrderingOpen() {
+      let profile = /databases/$(database)/documents/restaurant/profile;
+      return !exists(profile) ||
+             (get(profile).data.isAcceptingOrders == true &&
+              get(profile).data.get('isCashPaymentEnabled', false) == true);
+    }
+
+    function isValidDirectOrder(d) {
       return d.keys().hasAll(['customerId', 'items', 'status', 'type', 'subtotal', 'total', 'paymentMethod', 'paymentStatus', 'createdAt']) &&
+             // Strict allow-list: no payment ids, refunds, ratings, drivers or promo fields.
+             d.keys().hasOnly(['orderNumber', 'customerId', 'customerName', 'customerEmail', 'customerPhone', 'items', 'status', 'type',
+                               'subtotal', 'discountAmount', 'deliveryFee', 'serviceFee', 'tax', 'restaurantTip', 'deliveryTip', 'total',
+                               'deliveryAddress', 'deliveryLocation', 'notes', 'scheduledFor', 'scheduledTime',
+                               'paymentMethod', 'paymentStatus', 'createdAt', 'updatedAt']) &&
              d.customerId == request.auth.uid &&
+             d.status == 'new' &&
+             d.paymentMethod == 'cash' &&
+             d.paymentStatus == 'pending' &&
              optString(d, 'customerName', 100) &&
              optString(d, 'customerEmail', 150) &&
              optString(d, 'customerPhone', 20) &&
@@ -325,66 +350,86 @@ service cloud.firestore {
              d.type in ['pickup', 'delivery'] &&
              optString(d, 'deliveryAddress', 500) &&
              optGeoPoint(d, 'deliveryLocation') &&
-             d.status in ['new', 'payment_pending'] &&
-             d.paymentMethod in ['card', 'cash'] &&
-             d.paymentStatus in ['pending', 'paid'] &&
-             d.subtotal is number && d.subtotal >= 0 &&
-             d.total is number && d.total >= 0 &&
-             (!('discountAmount' in d) || (d.discountAmount is number && d.discountAmount >= 0)) &&
+             d.subtotal is number && d.subtotal > 0 &&
+             // Fees and tax only ever add to the subtotal; discounts and online tips need the server.
+             d.total is number && d.total >= d.subtotal &&
+             d.get('discountAmount', 0) == 0 &&
+             d.get('restaurantTip', 0) == 0 &&
+             d.get('deliveryTip', 0) == 0 &&
              (!('deliveryFee' in d) || (d.deliveryFee is number && d.deliveryFee >= 0)) &&
              (!('serviceFee' in d) || (d.serviceFee is number && d.serviceFee >= 0)) &&
              (!('tax' in d) || (d.tax is number && d.tax >= 0)) &&
-             (!('restaurantTip' in d) || (d.restaurantTip is number && d.restaurantTip >= 0)) &&
-             (!('deliveryTip' in d) || (d.deliveryTip is number && d.deliveryTip >= 0)) &&
-             optString(d, 'promoCode', 50) &&
              optString(d, 'notes', 1000) &&
              optString(d, 'orderNumber', 64) &&
-             optString(d, 'paymentIntentId', 100) &&
              optString(d, 'scheduledTime', 100) &&
              (!('scheduledFor' in d) || d.scheduledFor is timestamp) &&
-             d.createdAt is timestamp;
+             d.createdAt == request.time &&
+             (!('updatedAt' in d) || d.updatedAt == request.time);
+    }
+
+    // Firestore stops evaluating a rule after 1,000 expressions. Each role only evaluates
+    // its own branch below, cheapest checks first, and the full-document validation
+    // (isValidOrderPatch) runs last and only for staff / drivers.
+    function staffOrderUpdate(changed) {
+      return changed.hasOnly(['status', 'updatedAt', 'paymentStatus', 'paidAt', 'paymentCollectedBy', 'driverId',
+                              'driverName', 'deliveryStatus', 'proofOfDeliveryImage', 'deliveryLocation', 'driverLocation',
+                              'cancelReason', 'cancelledBy']) &&
+             validStatusChange() &&
+             validPaymentChange(changed) &&
+             isValidOrderPatch(request.resource.data, changed);
+    }
+
+    // Drivers work on deliveries the kitchen has already started. They cannot pull in
+    // new / unpaid orders, take another driver's delivery or reopen a finished one.
+    function driverOrderUpdate(changed) {
+      return resource.data.type == 'delivery' &&
+             changed.hasOnly(['status', 'deliveryStatus', 'driverId', 'driverName', 'updatedAt',
+                              'proofOfDeliveryImage', 'deliveryLocation', 'driverLocation',
+                              'paymentStatus', 'paidAt', 'paymentCollectedBy']) &&
+             resource.data.get('driverId', request.auth.uid) in [null, request.auth.uid] &&
+             request.resource.data.driverId == request.auth.uid &&
+             resource.data.status in ['preparing', 'ready', 'out_for_delivery', 'completed'] &&
+             request.resource.data.status in ['preparing', 'ready', 'out_for_delivery', 'completed'] &&
+             (resource.data.status != 'completed' || request.resource.data.status == 'completed') &&
+             validPaymentChange(changed) &&
+             isValidOrderPatch(request.resource.data, changed);
+    }
+
+    // What customers may change on their own orders. Exactly one of the three cases is
+    // evaluated, depending on which fields the request touches.
+    function customerOrderUpdate(changed) {
+      let d = request.resource.data;
+      return changed.hasOnly(['deliveryLocation', 'updatedAt'])
+               // Move the delivery GPS pin while the order is active.
+               ? (resource.data.type == 'delivery' &&
+                  !(resource.data.status in ['completed', 'cancelled']) &&
+                  optGeoPoint(d, 'deliveryLocation') &&
+                  (!('updatedAt' in d) || d.updatedAt is timestamp))
+             : changed.hasAny(['rating', 'ratingComment', 'ratedAt'])
+               // Rate a completed order once.
+               ? (changed.hasOnly(['rating', 'ratingComment', 'ratedAt']) &&
+                  resource.data.status == 'completed' &&
+                  !('rating' in resource.data) &&
+                  d.rating is number && d.rating >= 1 && d.rating <= 5 &&
+                  optString(d, 'ratingComment', 1000) &&
+                  (!('ratedAt' in d) || d.ratedAt is timestamp))
+               // Cancel an unpaid cash order before the kitchen accepts it. (Anything
+               // already paid is cancelled by the server, which refunds it.)
+               : (changed.hasOnly(['status', 'cancelledBy', 'cancelReason', 'updatedAt']) &&
+                  resource.data.status == 'new' &&
+                  d.status == 'cancelled' &&
+                  resource.data.get('paymentMethod', 'card') == 'cash' &&
+                  resource.data.get('paymentStatus', 'pending') == 'pending' &&
+                  d.get('cancelledBy', 'customer') == 'customer' &&
+                  optString(d, 'cancelReason', 300) &&
+                  (!('updatedAt' in d) || d.updatedAt is timestamp));
     }
 
     function canUpdateOrder(r) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return isValidOrderPatch(request.resource.data) && validPaymentChange(changed) &&
-             (
-               (isStaffRole(r) &&
-                 changed.hasOnly(['status', 'updatedAt', 'paymentStatus', 'paidAt', 'paymentCollectedBy', 'driverId',
-                                  'driverName', 'deliveryStatus', 'proofOfDeliveryImage', 'deliveryLocation', 'driverLocation',
-                                  'cancelReason', 'cancelledBy']) &&
-                 validStatusChange()) ||
-               (r == 'driver' &&
-                 resource.data.type == 'delivery' &&
-                 changed.hasOnly(['status', 'deliveryStatus', 'driverId', 'driverName', 'updatedAt',
-                                  'proofOfDeliveryImage', 'deliveryLocation', 'driverLocation',
-                                  'paymentStatus', 'paidAt', 'paymentCollectedBy']) &&
-                 (!('driverId' in resource.data) || resource.data.driverId == null || resource.data.driverId == request.auth.uid) &&
-                 request.resource.data.driverId == request.auth.uid &&
-                 request.resource.data.status in ['preparing', 'ready', 'out_for_delivery', 'completed']) ||
-               // Customer can update their delivery GPS pin while order is active
-               (isAuthenticated() && resource.data.customerId == request.auth.uid &&
-                 resource.data.type == 'delivery' &&
-                 !(resource.data.status in ['completed', 'cancelled']) &&
-                 changed.hasOnly(['deliveryLocation', 'updatedAt'])) ||
-               // Customer can complete payment for their pending card order
-               (isAuthenticated() && resource.data.customerId == request.auth.uid &&
-                 resource.data.status == 'payment_pending' &&
-                 request.resource.data.status in ['new', 'payment_pending'] &&
-                 changed.hasOnly(['status', 'paymentStatus', 'paidAt', 'paymentIntentId', 'updatedAt'])) ||
-               // Customer can cancel before kitchen begins preparation
-               (isAuthenticated() && resource.data.customerId == request.auth.uid &&
-                 resource.data.status in ['payment_pending', 'new'] &&
-                 request.resource.data.status == 'cancelled' &&
-                 changed.hasOnly(['status', 'cancelledBy', 'cancelReason', 'updatedAt'])) ||
-               // Customer can rate their completed order
-               (isAuthenticated() && resource.data.customerId == request.auth.uid &&
-                 resource.data.status == 'completed' &&
-                 !('rating' in resource.data) &&
-                 request.resource.data.rating is number &&
-                 request.resource.data.rating >= 1 && request.resource.data.rating <= 5 &&
-                 changed.hasOnly(['rating', 'ratingComment', 'ratedAt']))
-             );
+      return (isStaffRole(r) && staffOrderUpdate(changed)) ||
+             (r == 'driver' && driverOrderUpdate(changed)) ||
+             (isAuthenticated() && resource.data.customerId == request.auth.uid && customerOrderUpdate(changed));
     }
 
     function canReadOrder(r) {
@@ -395,9 +440,29 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if canReadOrder(role());
-      allow create: if isAuthenticated() && isValidOrderCreate(request.resource.data) && request.resource.data.customerId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidDirectOrder(request.resource.data) && cashOrderingOpen();
       allow update: if canUpdateOrder(role());
       allow delete: if false; // Orders should not be deleted, only cancelled
+
+      // Proof-of-delivery photos live next to the order instead of inside it, so order
+      // lists (dashboards, "My orders") stay small and fast on mobile connections.
+      match /proof/{proofId} {
+        function order() {
+          return get(/databases/$(database)/documents/orders/$(orderId)).data;
+        }
+        allow read: if isAuthenticated() &&
+                    (order().customerId == request.auth.uid || order().get('driverId', '') == request.auth.uid || isStaffRole(role()));
+        allow create, update: if isAuthenticated() && proofId == 'photo' &&
+                              order().type == 'delivery' &&
+                              (order().get('driverId', '') == request.auth.uid || isStaffRole(role())) &&
+                              request.resource.data.keys().hasOnly(['image', 'driverId', 'driverName', 'createdAt']) &&
+                              request.resource.data.image is string && request.resource.data.image.size() <= 1048576 &&
+                              request.resource.data.image.matches('^data:image/.*') &&
+                              optString(request.resource.data, 'driverId', 100) &&
+                              optString(request.resource.data, 'driverName', 100) &&
+                              (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp);
+        allow delete: if false;
+      }
     }
 
     // ===============================================================
@@ -405,21 +470,17 @@ service cloud.firestore {
     // ===============================================================
 
     match /promos/{promoId} {
-      allow read: if true; // Publicly readable to check and apply promo codes
+      allow read: if true; // Readable so the storefront can check and apply promo codes
       allow create: if isManagerRole(role()) && isValidPromoCode(request.resource.data) &&
                     request.resource.data.id == promoId &&
                     request.resource.data.usedCount == 0 && request.resource.data.usedBy.size() == 0;
-      allow update: if (isManagerRole(role()) && isValidPromoCode(request.resource.data) &&
-                    request.resource.data.id == resource.data.id) ||
-                    (isAuthenticated() &&
-                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedCount', 'usedBy']) &&
-                     request.resource.data.usedCount >= resource.data.usedCount);
+      // Usage counters (usedCount / usedBy) are maintained by the server when orders are
+      // placed. Customers must never be able to change them (that would let anyone
+      // exhaust a code or reuse a one-time code).
+      allow update: if isManagerRole(role()) && isValidPromoCode(request.resource.data) &&
+                    request.resource.data.id == resource.data.id;
       allow delete: if isManagerRole(role());
     }
 
-    match /test/connection {
-      allow read: if true;
-      allow write: if false;
-    }
   }
 }

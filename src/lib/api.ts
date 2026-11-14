@@ -11,9 +11,15 @@ export class ApiError extends Error {
   }
 }
 
+/** Phones on weak connections can leave a request hanging forever; give up and let the user retry. */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const token = await auth.currentUser?.getIdToken().catch(() => null);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
+  let data: any = null;
   try {
     res = await fetch(path, {
       method,
@@ -22,20 +28,38 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     });
+    try {
+      data = await res.json();
+    } catch (err) {
+      if (controller.signal.aborted) throw err;
+      // Non-JSON response (e.g. the dev server is restarting).
+    }
   } catch {
-    throw new ApiError("Can't reach the server. Check your connection and try again.", 0);
-  }
-  let data: any = null;
-  try {
-    data = await res.json();
-  } catch {
-    // Non-JSON response (e.g. the dev server is restarting).
+    throw new ApiError(
+      controller.signal.aborted
+        ? 'The server is taking too long to answer. Check your connection and try again.'
+        : "Can't reach the server. Check your connection and try again.",
+      0,
+    );
+  } finally {
+    clearTimeout(timer);
   }
   if (!res.ok) {
     throw new ApiError(data?.error || `Request failed (${res.status}). Please try again.`, res.status, data);
   }
   return data as T;
+}
+
+/** The server answered, but it has no database access (see "basic mode" in SETUP.md). */
+export function isNoDatabaseError(err: unknown): boolean {
+  return err instanceof ApiError && err.data?.code === 'SERVER_NO_DATABASE';
+}
+
+/** The request may or may not have reached the server (offline, timeout): safe to retry, not to assume failure. */
+export function isNetworkError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 0;
 }
 
 export const apiGet = <T>(path: string) => request<T>('GET', path);
@@ -62,6 +86,8 @@ export interface CheckoutRequest {
   tip?: { restaurant?: TipChoice; delivery?: TipChoice };
   expectedTotalCents?: number;
   replacesOrderId?: string | null;
+  /** Same key = same order: lets a retry after a lost response return the existing order. */
+  checkoutKey?: string;
 }
 
 export interface CheckoutResponse {
@@ -71,7 +97,12 @@ export interface CheckoutResponse {
   paymentMethod: PaymentMethod;
   totals: OrderTotals;
   clientSecret: string | null;
+  /** True when this answers a repeated request for an order that already existed. */
+  duplicate?: boolean;
 }
+
+/** "server": orders are priced and created by the server. "direct": basic mode (cash only, see SETUP.md). */
+export type OrderingMode = 'server' | 'direct';
 
 export interface PaymentStateResponse {
   paid: boolean;
@@ -82,11 +113,10 @@ export interface PaymentStateResponse {
 }
 
 export const api = {
-  config: () => apiGet<{ cardPayments: boolean }>('/api/config'),
-  health: () => apiGet<{ status: string; firestore: 'ok' | 'error'; cardPayments: boolean; webhooks: boolean }>('/api/health'),
+  config: () => apiGet<{ cardPayments: boolean; ordering?: OrderingMode }>('/api/config'),
+  health: () =>
+    apiGet<{ status: string; firestore: 'ok' | 'error'; ordering?: OrderingMode; cardPayments: boolean; webhooks: boolean }>('/api/health'),
   checkout: (body: CheckoutRequest) => apiPost<CheckoutResponse>('/api/checkout', body),
-  createPaymentIntent: (body: { amountCents: number; orderId: string }) =>
-    apiPost<{ clientSecret: string; paymentIntentId: string }>('/api/create-payment-intent', body),
   confirmPayment: (orderId: string) => apiPost<PaymentStateResponse>(`/api/orders/${encodeURIComponent(orderId)}/confirm-payment`),
   abandon: (orderId: string) => apiPost<PaymentStateResponse>(`/api/orders/${encodeURIComponent(orderId)}/abandon`),
   cancel: (orderId: string, reason?: string) =>
@@ -95,13 +125,4 @@ export const api = {
     apiPost<{ refundAmount: number; paymentStatus: PaymentStatus; status: OrderStatus }>(`/api/orders/${encodeURIComponent(orderId)}/refund`, { amount, reason }),
   rate: (orderId: string, rating: number, comment?: string) =>
     apiPost<{ ok: true }>(`/api/orders/${encodeURIComponent(orderId)}/rate`, { rating, comment }),
-  getOrderLocation: (orderId: string) =>
-    apiGet<{ driverLocation: GeoPoint | null; deliveryLocation: GeoPoint | null; updatedAt: number | null }>(
-      `/api/orders/${encodeURIComponent(orderId)}/location`,
-    ),
-  updateOrderLocation: (orderId: string, body: { driverLocation?: GeoPoint | null; deliveryLocation?: GeoPoint | null }) =>
-    apiPost<{ ok: true; driverLocation: GeoPoint | null; deliveryLocation: GeoPoint | null }>(
-      `/api/orders/${encodeURIComponent(orderId)}/location`,
-      body,
-    ),
 };

@@ -6,13 +6,15 @@ import { db } from '../firebase';
 import type { GeoPoint, Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
-import { api } from '../lib/api';
 import { orderCode } from '../lib/ids';
 import { formatMoney } from '../lib/money';
 import { timeAgo, toMillis } from '../lib/dates';
 import { isCashDue } from '../lib/orderStatus';
 import { geocodeAddressNominatim, isValidGeoPoint, sanitizeGeoPoint, shouldPublishGpsUpdate } from '../lib/geo';
 import { resizeWithPreset } from '../utils/imageUpload';
+import { saveProofPhoto } from '../lib/proof';
+import { ordersFromSnapshot } from '../lib/orderList';
+import { useWakeLock } from '../hooks/useWakeLock';
 import { friendlyError, reportError } from '../utils/errorHandling';
 import { Sheet, Spinner } from '../components/ui';
 
@@ -20,15 +22,17 @@ const OrderTrackingMap = lazy(() =>
   import('../components/OrderTrackingMap').then((m) => ({ default: m.OrderTrackingMap })),
 );
 
-const osmDirectionsUrl = (from?: GeoPoint | null, to?: GeoPoint | null, fallbackAddress = '') => {
-  if (isValidGeoPoint(from) && isValidGeoPoint(to)) {
-    return `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${from.lat}%2C${from.lng}%3B${to.lat}%2C${to.lng}`;
-  }
-  if (isValidGeoPoint(to)) {
-    return `https://www.openstreetmap.org/?mlat=${to.lat}&mlon=${to.lng}#map=17/${to.lat}/${to.lng}`;
-  }
-  return `https://www.openstreetmap.org/search?query=${encodeURIComponent(fallbackAddress)}`;
+/**
+ * Turn-by-turn directions from the driver's current position. This universal link opens
+ * the maps app on phones (voice navigation) and the website on a computer.
+ */
+const navigationUrl = (to?: GeoPoint | null, fallbackAddress = '') => {
+  const destination = isValidGeoPoint(to) ? `${to.lat},${to.lng}` : fallbackAddress;
+  return `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${encodeURIComponent(destination)}`;
 };
+
+/** Deliveries a driver still has to finish. */
+const ACTIVE_DELIVERY_STATUSES = ['new', 'confirmed', 'preparing', 'ready', 'out_for_delivery'];
 
 export const DriverDashboard: React.FC = () => {
   const { userProfile } = useAuth();
@@ -56,24 +60,39 @@ export const DriverDashboard: React.FC = () => {
 
   useEffect(() => {
     if (!userProfile) return;
+    const availableCache = new Map<string, Order>();
     const unsubAvailable = onSnapshot(
       query(collection(db, 'orders'), where('type', '==', 'delivery'), where('status', 'in', ['preparing', 'ready']), limit(150)),
       (snap) => {
         setAvailable(
-          snap.docs
-            .map((d) => ({ id: d.id, ...d.data() }) as Order)
+          ordersFromSnapshot(snap, availableCache)
             .filter((o) => !o.driverId)
             .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt)),
         );
       },
       (err) => reportError(err, 'driver-available'),
     );
-    const unsubMine = onSnapshot(
-      query(collection(db, 'orders'), where('type', '==', 'delivery'), where('driverId', '==', userProfile.uid), limit(150)),
-      (snap) => {
-        setMine(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Order).filter((o) => !['completed', 'cancelled'].includes(o.status)));
+
+    // Only deliveries that are still open. (Listing every delivery this driver ever made
+    // downloaded their whole history on each visit and, past the query limit, could
+    // hide the delivery they are on right now.)
+    const mineBase = [where('type', '==', 'delivery'), where('driverId', '==', userProfile.uid)];
+    const mineCache = new Map<string, Order>();
+    const showMine = (snap: Parameters<typeof ordersFromSnapshot>[0]) =>
+      setMine(
+        ordersFromSnapshot(snap, mineCache)
+          .filter((o) => ACTIVE_DELIVERY_STATUSES.includes(o.status))
+          .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt)),
+      );
+    let unsubMine = onSnapshot(
+      query(collection(db, 'orders'), ...mineBase, where('status', 'in', ACTIVE_DELIVERY_STATUSES), limit(50)),
+      showMine,
+      (err) => {
+        if ((err as { code?: string })?.code !== 'failed-precondition') return reportError(err, 'driver-mine');
+        // The database asked for an index for the precise query: use the broad one instead.
+        mineCache.clear();
+        unsubMine = onSnapshot(query(collection(db, 'orders'), ...mineBase, limit(300)), showMine, (e) => reportError(e, 'driver-mine'));
       },
-      (err) => reportError(err, 'driver-mine'),
     );
     return () => {
       unsubAvailable();
@@ -121,13 +140,13 @@ export const DriverDashboard: React.FC = () => {
     const activeOrders = mineRef.current;
     if (activeOrders.length === 0) return;
 
-    await Promise.allSettled(
-      activeOrders.flatMap((o) => [
-        api.updateOrderLocation(o.id, { driverLocation: clean }),
-        updateDoc(doc(db, 'orders', o.id), { driverLocation: clean, updatedAt: serverTimestamp() }),
-      ]),
-    );
+    // One small write per active delivery; the customer's tracker receives it through
+    // its live order listener.
+    await Promise.allSettled(activeOrders.map((o) => updateDoc(doc(db, 'orders', o.id), { driverLocation: clean })));
   }, []);
+
+  // Phones stop reporting GPS when the screen locks: keep it on while sharing.
+  useWakeLock(sharingGps);
 
   const stopGpsSharing = useCallback(() => {
     if (watchIdRef.current !== null && 'geolocation' in navigator) {
@@ -250,17 +269,24 @@ export const DriverDashboard: React.FC = () => {
       toast.error(`Confirm that you collected ${formatMoney(completing.total)} in cash.`);
       return;
     }
+    const order = completing;
     const ok = await run(
-      completing,
+      order,
       {
         status: 'completed',
         deliveryStatus: 'delivered',
-        ...(photo ? { proofOfDeliveryImage: photo } : {}),
         ...(cashDue ? { paymentStatus: 'paid', paidAt: serverTimestamp(), paymentCollectedBy: driverName } : {}),
       },
       'Delivered! Great job.',
     );
-    if (ok) setCompleting(null);
+    if (!ok) return;
+    setCompleting(null);
+    // The photo is saved next to the order (not inside it) and never blocks the hand-over.
+    if (photo && userProfile) {
+      saveProofPhoto(order.id, photo, { uid: userProfile.uid, name: driverName }).catch((err) =>
+        reportError(err, 'proof-photo', { message: 'The delivery was completed, but the photo could not be saved.' }),
+      );
+    }
   };
 
   const cashToCollect = useMemo(() => mine.filter(isCashDue).reduce((sum, o) => sum + o.total, 0), [mine]);
@@ -391,12 +417,12 @@ export const DriverDashboard: React.FC = () => {
 
                 <div className="grid grid-cols-3 gap-2">
                   <a
-                    href={osmDirectionsUrl(currentDriverPoint || storePoint, destPoint, order.deliveryAddress)}
+                    href={navigationUrl(destPoint, order.deliveryAddress)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-xs font-semibold transition"
                   >
-                    <Navigation size={17} /> OSM Route
+                    <Navigation size={17} /> Navigate
                   </a>
                   {order.customerPhone ? (
                     <a

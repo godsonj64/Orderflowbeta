@@ -288,13 +288,26 @@ function StatusBanner({
   status: StoreStatus;
   onAction: () => void;
 }) {
+  // The "minutes left" figure has to keep counting down while the page is open.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const counting = !status.canOrderNow && (!!status.pausedUntil || !!status.nextOpenAt);
+  useEffect(() => {
+    if (!counting) return;
+    const tick = () => document.visibilityState === 'visible' && setNowMs(Date.now());
+    const timer = window.setInterval(tick, 20_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [counting]);
+
   if (status.canOrderNow) return null;
 
   // Compute left crimson block metric & label (matching the bold number + tracked label in reference image)
   let metric = 'OFF';
   let metricLabel = 'CLOSED NOW';
 
-  const nowMs = Date.now();
   if (status.state === 'paused' && status.pausedUntil) {
     const mins = Math.max(1, Math.ceil((status.pausedUntil.getTime() - nowMs) / 60_000));
     metric = String(mins);
@@ -635,12 +648,13 @@ export const Home: React.FC = () => {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            enterKeyHint="search"
             placeholder={`Search on ${profile.name}`}
             className="w-full bg-soft border border-transparent focus:border-brand/30 focus:bg-card rounded-2xl pl-11 pr-10 py-3.5 text-sm text-ink placeholder:text-muted focus:ring-2 focus:ring-brand/20 outline-none transition"
             aria-label="Search the menu"
           />
           {search && (
-            <button onClick={() => setSearch('')} className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-muted hover:text-ink" aria-label="Clear search">
+            <button onClick={() => setSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2.5 text-muted hover:text-ink" aria-label="Clear search">
               <X size={16} />
             </button>
           )}
@@ -786,7 +800,7 @@ export const Home: React.FC = () => {
       <Spotlight profile={profile} theme={theme} />
 
       {itemCount > 0 && (
-        <div className="md:hidden fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 px-4 pb-2 pointer-events-none">
+        <div className="md:hidden fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-30 px-4 pb-2.5 pointer-events-none">
           <Link
             to="/cart"
             className="pointer-events-auto flex items-center justify-between gap-3 bg-brand text-on-brand rounded-2xl px-4 py-3.5 shadow-ios-lg font-bold text-sm"

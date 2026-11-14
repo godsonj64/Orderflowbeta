@@ -24,7 +24,7 @@ import type { GeoPoint, Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useStore } from '../context/StoreContext';
-import { ApiError, api } from '../lib/api';
+import { api, isNoDatabaseError } from '../lib/api';
 import { formatMoney } from '../lib/money';
 import { orderCode } from '../lib/ids';
 import { customerStatusLabel, isCashDue, netAmount } from '../lib/orderStatus';
@@ -32,6 +32,8 @@ import { formatTimeLabel } from '../lib/hours';
 import { prepMinutes } from '../lib/storeStatus';
 import { toDate } from '../lib/dates';
 import { geocodeAddressNominatim, isValidGeoPoint, sanitizeGeoPoint } from '../lib/geo';
+import { watchProofPhoto } from '../lib/proof';
+import { friendlyError } from '../utils/errorHandling';
 import { ConfirmDialog, PageSpinner, Spinner } from '../components/ui';
 import { useStorefrontUI } from '../components/Layout';
 
@@ -47,13 +49,6 @@ const STATUS_TOASTS: Record<string, string> = {
   completed: 'Enjoy your meal!',
   cancelled: 'Your order was cancelled.',
 };
-
-function pickNewestGeoPoint(a?: GeoPoint | null, b?: GeoPoint | null): GeoPoint | null {
-  const va = isValidGeoPoint(a) ? a : null;
-  const vb = isValidGeoPoint(b) ? b : null;
-  if (va && vb) return (vb.updatedAt || 0) >= (va.updatedAt || 0) ? vb : va;
-  return vb || va || null;
-}
 
 export const OrderTracker: React.FC = () => {
   const { orderId } = useParams<{ orderId: string }>();
@@ -74,10 +69,10 @@ export const OrderTracker: React.FC = () => {
   // Real-time GPS & OpenStreetMap state
   const [geocodedStore, setGeocodedStore] = useState<GeoPoint | null>(null);
   const [geocodedDelivery, setGeocodedDelivery] = useState<GeoPoint | null>(null);
-  const [serverDriverLoc, setServerDriverLoc] = useState<GeoPoint | null>(null);
-  const [serverDeliveryLoc, setServerDeliveryLoc] = useState<GeoPoint | null>(null);
+  const [pinnedDelivery, setPinnedDelivery] = useState<GeoPoint | null>(null);
   const [customerLiveGps, setCustomerLiveGps] = useState<GeoPoint | null>(null);
   const [locatingMe, setLocatingMe] = useState(false);
+  const [proofPhoto, setProofPhoto] = useState<string | null>(null);
 
   const prevStatus = useRef<string | null>(null);
   const paymentChecked = useRef(false);
@@ -110,30 +105,15 @@ export const OrderTracker: React.FC = () => {
     return () => unsub();
   }, [orderId, user, authLoading]);
 
-  // Poll real-time GPS location endpoint while order is active and tab is visible
+  // The driver's position arrives through the live order document above (no polling).
+
+  // Proof-of-delivery photo (stored next to the order, see src/lib/proof.ts).
+  const wantsProof = order?.type === 'delivery' && order.status === 'completed' && !order.proofOfDeliveryImage;
   useEffect(() => {
-    if (!order || ['completed', 'cancelled', 'payment_pending'].includes(order.status)) return;
-    let active = true;
-    const pull = () => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      api
-        .getOrderLocation(order.id)
-        .then((res) => {
-          if (!active) return;
-          if (isValidGeoPoint(res.driverLocation)) setServerDriverLoc(res.driverLocation);
-          if (isValidGeoPoint(res.deliveryLocation)) setServerDeliveryLoc(res.deliveryLocation);
-        })
-        .catch(() => undefined);
-    };
-    pull();
-    const timer = window.setInterval(pull, 4000);
-    document.addEventListener('visibilitychange', pull);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', pull);
-    };
-  }, [order?.id, order?.status]);
+    setProofPhoto(null);
+    if (!orderId || !wantsProof) return;
+    return watchProofPhoto(orderId, setProofPhoto);
+  }, [orderId, wantsProof]);
 
   // Geocode restaurant address if profile.location is not explicitly set
   useEffect(() => {
@@ -182,29 +162,26 @@ export const OrderTracker: React.FC = () => {
     [profile?.location, geocodedStore],
   );
 
-  const deliveryPoint = useMemo(
-    () => pickNewestGeoPoint(order?.deliveryLocation, serverDeliveryLoc) || geocodedDelivery,
-    [order?.deliveryLocation, serverDeliveryLoc, geocodedDelivery],
-  );
+  // A pin the customer just dropped shows immediately, then the saved order takes over.
+  const deliveryPoint = useMemo(() => {
+    const saved = isValidGeoPoint(order?.deliveryLocation) ? order!.deliveryLocation! : null;
+    if (pinnedDelivery && (!saved || (pinnedDelivery.updatedAt || 0) > (saved.updatedAt || 0))) return pinnedDelivery;
+    return saved || geocodedDelivery;
+  }, [order?.deliveryLocation, pinnedDelivery, geocodedDelivery]);
 
-  const driverPoint = useMemo(
-    () => pickNewestGeoPoint(order?.driverLocation, serverDriverLoc),
-    [order?.driverLocation, serverDriverLoc],
-  );
+  const driverPoint = useMemo(() => (isValidGeoPoint(order?.driverLocation) ? order!.driverLocation! : null), [order?.driverLocation]);
 
   const saveCustomerDeliveryPin = async (point: GeoPoint) => {
     if (!order || order.type !== 'delivery') return;
     const clean = sanitizeGeoPoint({ ...point, updatedAt: Date.now() });
     if (!clean) return;
-    setServerDeliveryLoc(clean);
+    setPinnedDelivery(clean);
     try {
-      await Promise.allSettled([
-        api.updateOrderLocation(order.id, { deliveryLocation: clean }),
-        updateDoc(doc(db, 'orders', order.id), { deliveryLocation: clean, updatedAt: serverTimestamp() }),
-      ]);
-      toast.success('Delivery GPS pin updated for your driver');
-    } catch {
-      toast.error('Could not update GPS pin.');
+      await updateDoc(doc(db, 'orders', order.id), { deliveryLocation: clean, updatedAt: serverTimestamp() });
+      toast.success('Delivery GPS pin updated for your driver', { id: 'pin-saved' });
+    } catch (err) {
+      setPinnedDelivery(null);
+      toast.error(friendlyError(err, 'Could not update the GPS pin.'), { id: 'pin-saved' });
     }
   };
 
@@ -285,9 +262,14 @@ export const OrderTracker: React.FC = () => {
     setCancelling(true);
     try {
       try {
+        // The server cancels the order and refunds card payments in one step. If it
+        // says no (e.g. the kitchen already accepted the order) that answer stands.
         const res = await api.cancel(order.id, 'Cancelled by customer');
         toast.success(res.refunded ? 'Order cancelled. Your refund is on its way.' : 'Order cancelled.');
-      } catch {
+      } catch (err) {
+        // Basic mode (server without database access): an unpaid cash order can be
+        // cancelled directly. Anything paid always needs the server for the refund.
+        if (!isNoDatabaseError(err) || order.paymentMethod !== 'cash' || order.paymentStatus === 'paid') throw err;
         await updateDoc(doc(db, 'orders', order.id), {
           status: 'cancelled',
           cancelledBy: 'customer',
@@ -298,7 +280,8 @@ export const OrderTracker: React.FC = () => {
       }
       setCancelOpen(false);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not cancel the order.');
+      setCancelOpen(false);
+      toast.error(friendlyError(err, 'Could not cancel the order. Please call the restaurant.'), { duration: 6000 });
     } finally {
       setCancelling(false);
     }
@@ -310,7 +293,8 @@ export const OrderTracker: React.FC = () => {
     try {
       try {
         await api.rate(order.id, rating, comment.trim());
-      } catch {
+      } catch (err) {
+        if (!isNoDatabaseError(err)) throw err;
         await updateDoc(doc(db, 'orders', order.id), {
           rating,
           ...(comment.trim() ? { ratingComment: comment.trim() } : {}),
@@ -319,7 +303,7 @@ export const OrderTracker: React.FC = () => {
       }
       toast.success('Thanks for your feedback!');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not save your rating.');
+      toast.error(friendlyError(err, 'Could not save your rating.'));
     } finally {
       setSubmittingRating(false);
     }
@@ -445,17 +429,17 @@ export const OrderTracker: React.FC = () => {
 
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           {order.status === 'new' && (
-            <button onClick={() => setCancelOpen(true)} className="px-4 py-2.5 rounded-btn bg-red-50 text-red-700 text-sm font-semibold">
+            <button onClick={() => setCancelOpen(true)} className="min-h-[44px] px-4 py-2.5 rounded-btn bg-red-50 text-red-700 text-sm font-semibold">
               Cancel order
             </button>
           )}
           {profile?.phone && (
-            <a href={`tel:${profile.phone}`} className="px-4 py-2.5 rounded-btn bg-soft text-sm font-semibold flex items-center gap-2">
+            <a href={`tel:${profile.phone}`} className="min-h-[44px] px-4 py-2.5 rounded-btn bg-soft text-sm font-semibold flex items-center gap-2">
               <Phone size={16} /> Call restaurant
             </a>
           )}
           {(order.status === 'completed' || cancelled) && (
-            <button onClick={reorder} className="px-4 py-2.5 rounded-btn bg-brand text-on-brand text-sm font-semibold flex items-center gap-2">
+            <button onClick={reorder} className="min-h-[44px] px-4 py-2.5 rounded-btn bg-brand text-on-brand text-sm font-semibold flex items-center gap-2">
               <RotateCcw size={16} /> Order again
             </button>
           )}
@@ -606,12 +590,12 @@ export const OrderTracker: React.FC = () => {
         </div>
       </section>
 
-      {order.proofOfDeliveryImage && (
+      {(order.proofOfDeliveryImage || proofPhoto) && (
         <section className="bg-card rounded-card border border-line p-5">
           <h2 className="font-bold mb-3 flex items-center gap-2">
             <Camera size={18} /> Proof of delivery
           </h2>
-          <img src={order.proofOfDeliveryImage} alt="Proof of delivery" className="rounded-btn w-full max-w-sm object-cover" />
+          <img src={order.proofOfDeliveryImage || proofPhoto || ''} alt="Proof of delivery" loading="lazy" className="rounded-btn w-full max-w-sm object-cover" />
         </section>
       )}
 
@@ -632,8 +616,8 @@ export const OrderTracker: React.FC = () => {
             <div className="space-y-3">
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((s) => (
-                  <button key={s} onClick={() => setRating(s)} aria-label={`${s} star${s > 1 ? 's' : ''}`} className="p-1">
-                    <Star size={32} className={s <= rating ? 'fill-amber-400 text-amber-400' : 'text-line'} />
+                  <button key={s} type="button" onClick={() => setRating(s)} aria-label={`${s} star${s > 1 ? 's' : ''}`} aria-pressed={s <= rating} className="p-1.5">
+                    <Star size={34} className={s <= rating ? 'fill-amber-400 text-amber-400' : 'text-line'} />
                   </button>
                 ))}
               </div>

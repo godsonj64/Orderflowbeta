@@ -21,8 +21,34 @@ import { CookiePolicy } from './pages/CookiePolicy';
 import { MANAGER_ROLES, STAFF_ROLES, type UserRole } from './types';
 
 // Admin screens are code-split so customers on phones only download the storefront.
+const RELOAD_KEY = 'orderflow_reloaded_for_update';
 function lazyNamed<T extends Record<string, any>>(loader: () => Promise<T>, name: keyof T) {
-  return lazy(() => loader().then((m) => ({ default: m[name] as React.ComponentType<any> })));
+  return lazy(() =>
+    loader().then(
+      (m) => {
+        try {
+          sessionStorage.removeItem(RELOAD_KEY);
+        } catch {
+          // ignore
+        }
+        return { default: m[name] as React.ComponentType<any> };
+      },
+      (err) => {
+        // Dashboards stay open for days. After a new version is deployed the old code
+        // files are gone, so opening another screen fails: reload once to get the update.
+        let alreadyReloaded = true;
+        try {
+          alreadyReloaded = !!sessionStorage.getItem(RELOAD_KEY);
+          sessionStorage.setItem(RELOAD_KEY, '1');
+        } catch {
+          // ignore
+        }
+        if (alreadyReloaded) throw err;
+        window.location.reload();
+        return new Promise<never>(() => undefined);
+      },
+    ),
+  );
 }
 const AdminDashboard = lazyNamed(() => import('./pages/AdminDashboard'), 'AdminDashboard');
 const KitchenDashboard = lazyNamed(() => import('./pages/KitchenDashboard'), 'KitchenDashboard');

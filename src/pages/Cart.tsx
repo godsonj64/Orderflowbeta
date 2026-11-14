@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { arrayUnion, doc, getDoc, increment, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import {
   AlertCircle,
@@ -22,21 +22,21 @@ import {
   Zap,
 } from 'lucide-react';
 import { db } from '../firebase';
-import type { GeoPoint, Order, OrderType, PaymentMethod, PromoCode } from '../types';
+import type { GeoPoint, OrderType, PaymentMethod, PromoCode } from '../types';
 import { useCart } from '../context/CartContext';
 import { useStore } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
 import { useStorefrontUI } from '../components/Layout';
 import { useCartPricing } from '../hooks/useCartPricing';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, isNoDatabaseError, type CheckoutRequest } from '../lib/api';
 import { formatMoney, fromCents, parseAmount } from '../lib/money';
-import { TIP_PRESETS, computeTotals, loyaltyPointsFor, promoDiscountCents, promoError, tipCents, type OrderTotals, type TipChoice } from '../lib/pricing';
-import { generateTimeSlots, type TimeSlot } from '../lib/hours';
-import { generateOrderCode } from '../lib/ids';
+import { MAX_LINE_QUANTITY, TIP_PRESETS, computeTotals, promoDiscountCents, promoError, tipCents, type OrderTotals, type TipChoice } from '../lib/pricing';
+import { formatAbsoluteSlot, generateTimeSlots, type TimeSlot } from '../lib/hours';
+import { generateOrderCode, uid } from '../lib/ids';
 import { formatDistance, geocodeAddressNominatim, haversineDistanceKm, isValidGeoPoint, reverseGeocodeNominatim, sanitizeGeoPoint } from '../lib/geo';
 import { prepMinutes, scheduleDaysAhead } from '../lib/storeStatus';
 import { ConfirmDialog, Sheet, Spinner } from '../components/ui';
-import { reportError } from '../utils/errorHandling';
+import { friendlyError, reportError } from '../utils/errorHandling';
 
 const PaymentSheet = lazy(() => import('../components/CheckoutForm'));
 const OrderTrackingMap = lazy(() => import('../components/OrderTrackingMap').then((m) => ({ default: m.OrderTrackingMap })));
@@ -185,7 +185,7 @@ function SummaryRows({ totals, promoCode }: { totals: OrderTotals; promoCode?: s
 export const Cart: React.FC = () => {
   const navigate = useNavigate();
   const { cart, updateQuantity, removeFromCart, clearCart, promoCode, setPromoCode } = useCart();
-  const { profile, catalog, status, cardPaymentsAvailable, cashPaymentsAvailable, serverReachable } = useStore();
+  const { profile, catalog, status, cardPaymentsAvailable, cashPaymentsAvailable, serverReachable, orderingMode } = useStore();
   const { userProfile, loading: authLoading, updateContactInfo } = useAuth();
   const { openAuth } = useStorefrontUI();
   const pricing = useCartPricing();
@@ -199,16 +199,25 @@ export const Cart: React.FC = () => {
   // --- When -----------------------------------------------------------------
   const [whenChoice, setWhen] = useState<'asap' | 'later'>('asap');
   const when: 'asap' | 'later' = !status.canSchedule ? 'asap' : !status.canOrderNow ? 'later' : whenChoice;
+  // Re-computed every minute: a cart left open must not keep offering times that have passed.
+  const [slotClock, setSlotClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!status.canSchedule) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setSlotClock(Date.now());
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [status.canSchedule]);
   const slots: TimeSlot[] = useMemo(
     () =>
       profile && status.canSchedule
-        ? generateTimeSlots(profile.businessHours, status.timeZone, new Date(), {
+        ? generateTimeSlots(profile.businessHours, status.timeZone, new Date(slotClock), {
             leadMinutes: prepMinutes(profile),
             daysAhead: scheduleDaysAhead(profile),
             notBefore: status.pausedUntil,
           })
         : [],
-    [profile, status],
+    [profile, status, slotClock],
   );
   const slotDays = useMemo(() => {
     const days: { key: string; label: string; slots: TimeSlot[] }[] = [];
@@ -347,8 +356,13 @@ export const Cart: React.FC = () => {
     };
   }, [promoCode, userProfile?.uid]);
 
-  const promoProblem =
-    promoCode && userProfile && promoLoaded
+  // Discounts are validated and counted by the server; in basic mode they are not offered.
+  const promosAvailable = orderingMode !== 'direct';
+  const promoProblem = !promosAvailable
+    ? promoCode
+      ? "Promo codes can't be used right now."
+      : null
+    : promoCode && userProfile && promoLoaded
       ? promoError(promo, {
           uid: userProfile.uid,
           totalOrders: userProfile.totalOrders || 0,
@@ -357,7 +371,7 @@ export const Cart: React.FC = () => {
           now: new Date(),
         })
       : null;
-  const discountCents = promoCode && promoLoaded && !promoProblem ? promoDiscountCents(promo, pricing.subtotalCents) : 0;
+  const discountCents = promosAvailable && promoCode && promoLoaded && !promoProblem ? promoDiscountCents(promo, pricing.subtotalCents) : 0;
 
   const totals = computeTotals({
     subtotalCents: pricing.subtotalCents,
@@ -374,6 +388,12 @@ export const Cart: React.FC = () => {
   const [attempted, setAttempted] = useState(false);
   const [payment, setPayment] = useState<{ orderId: string; clientSecret: string; amount: number } | null>(null);
   const [priceChange, setPriceChange] = useState<OrderTotals | null>(null);
+  // One key (and order code) per distinct order. Tapping "Place order" again after a
+  // dropped connection re-sends the same key, so the kitchen never gets a duplicate ticket.
+  const attemptRef = useRef<{ signature: string; key: string; code: string } | null>(null);
+
+  // Until the server has said what it supports, don't flash "payment unavailable".
+  const configPending = orderingMode === null && serverReachable;
 
   const contactErrors = {
     name: !name.trim() ? 'Please enter your name.' : '',
@@ -389,14 +409,95 @@ export const Cart: React.FC = () => {
   if (totals.minimumOrderShortfall > 0) {
     blockers.push(`Add ${formatMoney(totals.minimumOrderShortfall)} more to reach the ${formatMoney(profile?.minimumOrder || 0)} minimum.`);
   }
-  if (!paymentMethod) blockers.push('Online payment is not available right now. Please call the restaurant.');
+  if (!paymentMethod && !configPending) blockers.push('Online payment is not available right now. Please call the restaurant.');
   if (!serverReachable) blockers.push("Can't reach the ordering server. Check your connection.");
 
   const finishOrder = (orderId: string) => {
+    attemptRef.current = null;
     writePending(null);
     clearCart();
     toast.success('Order placed!');
     navigate(`/order/${orderId}`, { replace: true, state: { placed: true } });
+  };
+
+  /** Remember contact details for next time (best effort). */
+  const rememberContact = () => {
+    if (!userProfile) return;
+    const updates: Parameters<typeof updateContactInfo>[0] = {};
+    if (phone.trim() && phone.trim() !== userProfile.phone) updates.phone = phone.trim().slice(0, 20);
+    if (!userProfile.name && name.trim()) updates.name = name.trim().slice(0, 100);
+    if (orderType === 'delivery' && address.trim() && address.trim() !== userProfile.savedAddresses?.[0]) {
+      updates.savedAddresses = [address.trim(), ...(userProfile.savedAddresses || []).filter((a) => a !== address.trim())].slice(0, 5);
+    }
+    if (Object.keys(updates).length) updateContactInfo(updates).catch(() => undefined);
+  };
+
+  /**
+   * Basic mode: the server has no database access, so it cannot create orders. The
+   * storefront may then place an UNPAID CASH order itself; firestore.rules allow exactly
+   * that and nothing else (no cards, discounts or tips, and never a "paid" order).
+   */
+  const placeDirectCashOrder = async (code: string) => {
+    if (!userProfile) return;
+    const scheduledDate = when === 'later' && selectedSlot ? new Date(selectedSlot.iso) : null;
+    const ref = doc(db, 'orders', code);
+    const orderData = {
+      orderNumber: code,
+      customerId: userProfile.uid,
+      customerName: name.trim().slice(0, 100),
+      customerEmail: (userProfile.email || '').slice(0, 150),
+      customerPhone: phone.trim().slice(0, 20),
+      items: pricing.lines.map((l, i) => ({
+        cartItemId: `L${i + 1}`,
+        itemId: l.input.itemId,
+        name: l.name,
+        price: fromCents(l.unitCents),
+        quantity: l.quantity,
+        selectedModifiers: l.modifiers.map((m) => ({
+          id: m.id,
+          name: m.name,
+          price: m.price,
+          ...(m.groupId ? { groupId: m.groupId } : {}),
+          ...(m.groupName ? { groupName: m.groupName } : {}),
+        })),
+        ...(l.input.notes ? { prepNotes: l.input.notes } : {}),
+      })),
+      status: 'new',
+      type: orderType,
+      subtotal: totals.subtotal,
+      discountAmount: 0,
+      deliveryFee: totals.deliveryFee,
+      serviceFee: totals.serviceFee,
+      tax: totals.tax,
+      restaurantTip: 0,
+      deliveryTip: 0,
+      total: totals.total,
+      ...(orderType === 'delivery' ? { deliveryAddress: address.trim().slice(0, 500) } : {}),
+      ...(orderType === 'delivery' && deliveryLocation ? { deliveryLocation } : {}),
+      ...(notes.trim() ? { notes: notes.trim() } : {}),
+      ...(scheduledDate ? { scheduledFor: Timestamp.fromDate(scheduledDate) } : {}),
+      ...(scheduledDate ? { scheduledTime: formatAbsoluteSlot(scheduledDate, status.timeZone) } : {}),
+      paymentMethod: 'cash',
+      paymentStatus: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    try {
+      // A transaction is sent straight to the server: it fails when offline instead of
+      // being queued and turning into a surprise order hours later.
+      await runTransaction(db, async (tx) => {
+        tx.set(ref, orderData);
+      });
+    } catch (err) {
+      // The first try may have gone through just before the connection dropped.
+      const existing = await getDoc(ref).catch(() => null);
+      if (existing?.exists() && existing.data().customerId === userProfile.uid) return;
+      throw new Error(
+        (err as { code?: string })?.code === 'permission-denied'
+          ? 'We could not place your order. The store may have just stopped taking orders. Please refresh and try again.'
+          : friendlyError(err, 'Could not place your order. Please try again.'),
+      );
+    }
   };
 
   const placeOrder = async (expectedTotalCents = totals.totalCents) => {
@@ -417,142 +518,64 @@ export const Cart: React.FC = () => {
       return;
     }
 
+    const request: CheckoutRequest = {
+      items: pricing.inputs,
+      orderType,
+      paymentMethod,
+      customerName: name.trim(),
+      customerPhone: phone.trim(),
+      deliveryAddress: orderType === 'delivery' ? address.trim() : undefined,
+      deliveryLocation: orderType === 'delivery' ? deliveryLocation : null,
+      notes: notes.trim() || undefined,
+      scheduledFor: when === 'later' ? selectedSlot?.iso : null,
+      promoCode: promosAvailable && promoCode && !promoProblem ? promoCode : null,
+      tip: tippingEnabled ? { restaurant: tip, delivery: orderType === 'delivery' ? driverTip : undefined } : undefined,
+    };
+    const signature = JSON.stringify(request);
+    if (attemptRef.current?.signature !== signature) {
+      attemptRef.current = { signature, key: `${uid()}${uid()}`, code: generateOrderCode() };
+    }
+    const attempt = attemptRef.current;
+
     placingRef.current = true;
     setPlacing(true);
     try {
-      const isFree = totals.totalCents === 0;
-      const chargeCard = paymentMethod === 'card' && !isFree && cardPaymentsAvailable;
-      const code = generateOrderCode();
+      if (orderingMode === 'direct') {
+        await placeDirectCashOrder(attempt.code);
+        rememberContact();
+        finishOrder(attempt.code);
+        return;
+      }
 
-      let targetOrderId = code;
-      let clientSecret: string | null = null;
-
-      // Try server checkout first
+      // The server prices the order from the live menu and creates it. Whatever it
+      // answers is final: a rejection (closed, sold out, promo, ...) is shown to the
+      // customer, never worked around.
+      let res;
       try {
-        const res = await api.checkout({
-          items: pricing.inputs,
-          orderType,
-          paymentMethod,
-          customerName: name.trim(),
-          customerPhone: phone.trim(),
-          deliveryAddress: orderType === 'delivery' ? address.trim() : undefined,
-          deliveryLocation: orderType === 'delivery' ? deliveryLocation : null,
-          notes: notes.trim() || undefined,
-          scheduledFor: when === 'later' ? selectedSlot?.iso : null,
-          promoCode: promoCode && !promoProblem ? promoCode : null,
-          tip: tippingEnabled ? { restaurant: tip, delivery: orderType === 'delivery' ? driverTip : undefined } : undefined,
-          expectedTotalCents,
-          replacesOrderId: readPending(),
-        });
-        targetOrderId = res.orderId;
-        clientSecret = res.clientSecret;
-      } catch (serverErr: any) {
-        if (serverErr instanceof ApiError && serverErr.data?.code === 'PRICE_CHANGED' && serverErr.data?.totals) {
-          setPriceChange(serverErr.data.totals as OrderTotals);
+        res = await api.checkout({ ...request, expectedTotalCents, replacesOrderId: readPending(), checkoutKey: attempt.key });
+      } catch (err) {
+        // The server lost its database access after this page loaded: basic mode.
+        if (isNoDatabaseError(err) && paymentMethod === 'cash' && !request.promoCode) {
+          await placeDirectCashOrder(attempt.code);
+          rememberContact();
+          finishOrder(attempt.code);
           return;
         }
-
-        // If server cannot reach Firestore with Admin SDK (offline fallback), place directly into Firestore
-        console.warn('Server checkout unavailable, creating order directly in database:', serverErr?.message);
-
-        let paymentIntentId: string | null = null;
-        if (chargeCard) {
-          try {
-            const pi = await api.createPaymentIntent({
-              amountCents: totals.totalCents,
-              orderId: code,
-            });
-            clientSecret = pi.clientSecret;
-            paymentIntentId = pi.paymentIntentId;
-          } catch (piErr) {
-            console.error('Payment intent creation failed:', piErr);
-          }
-        }
-
-        const scheduledDate = when === 'later' && selectedSlot ? new Date(selectedSlot.iso) : null;
-        const orderData: Omit<Order, 'id'> & Record<string, unknown> = {
-          orderNumber: code,
-          customerId: userProfile.uid,
-          customerName: name.trim(),
-          customerEmail: (userProfile.email || '').slice(0, 150),
-          customerPhone: phone.trim(),
-          items: pricing.lines.map((l, i) => ({
-            cartItemId: `L${i + 1}`,
-            itemId: l.input.itemId,
-            name: l.name,
-            price: fromCents(l.unitCents),
-            quantity: l.quantity,
-            selectedModifiers: l.modifiers.map((m) => ({
-              id: m.id,
-              name: m.name,
-              price: m.price,
-              ...(m.groupId ? { groupId: m.groupId } : {}),
-              ...(m.groupName ? { groupName: m.groupName } : {}),
-            })),
-            ...(l.input.notes ? { prepNotes: l.input.notes } : {}),
-          })),
-          status: chargeCard && clientSecret ? 'payment_pending' : 'new',
-          type: orderType,
-          subtotal: totals.subtotal,
-          discountAmount: totals.discount,
-          ...(promoCode && !promoProblem ? { promoCode } : {}),
-          deliveryFee: totals.deliveryFee,
-          serviceFee: totals.serviceFee,
-          tax: totals.tax,
-          restaurantTip: totals.restaurantTip,
-          deliveryTip: totals.deliveryTip,
-          total: totals.total,
-          ...(orderType === 'delivery' ? { deliveryAddress: address.trim() } : {}),
-          ...(orderType === 'delivery' && deliveryLocation ? { deliveryLocation } : {}),
-          ...(notes.trim() ? { notes: notes.trim() } : {}),
-          ...(scheduledDate ? { scheduledFor: Timestamp.fromDate(scheduledDate) } : {}),
-          ...(scheduledDate && selectedSlot ? { scheduledTime: selectedSlot.timeLabel } : {}),
-          paymentMethod,
-          paymentStatus: chargeCard && clientSecret ? 'pending' : paymentMethod === 'cash' ? 'pending' : 'paid',
-          ...(paymentIntentId ? { paymentIntentId } : {}),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
-
-        await setDoc(doc(db, 'orders', code), orderData);
-        targetOrderId = code;
-
-        // Best effort updates for statistics and promo usage
-        updateDoc(doc(db, 'users', userProfile.uid), {
-          totalOrders: increment(1),
-          totalSpent: increment(totals.total),
-          loyaltyPoints: increment(loyaltyPointsFor(totals.subtotal, totals.discount)),
-          lastOrderDate: serverTimestamp(),
-        }).catch(() => undefined);
-
-        if (promoCode && !promoProblem) {
-          updateDoc(doc(db, 'promos', promoCode), {
-            usedCount: increment(1),
-            usedBy: arrayUnion(userProfile.uid),
-          }).catch(() => undefined);
-        }
+        throw err;
       }
 
-      // Remember contact details for next time (best effort).
-      const updates: Parameters<typeof updateContactInfo>[0] = {};
-      if (phone.trim() && phone.trim() !== userProfile.phone) updates.phone = phone.trim().slice(0, 20);
-      if (!userProfile.name && name.trim()) updates.name = name.trim().slice(0, 100);
-      if (orderType === 'delivery' && address.trim() && address.trim() !== userProfile.savedAddresses?.[0]) {
-        updates.savedAddresses = [address.trim(), ...(userProfile.savedAddresses || []).filter((a) => a !== address.trim())].slice(0, 5);
-      }
-      if (Object.keys(updates).length) updateContactInfo(updates).catch(() => undefined);
-
-      if (chargeCard && clientSecret) {
-        writePending(targetOrderId);
-        setPayment({ orderId: targetOrderId, clientSecret, amount: totals.total });
+      rememberContact();
+      if (res.clientSecret) {
+        writePending(res.orderId);
+        setPayment({ orderId: res.orderId, clientSecret: res.clientSecret, amount: res.totals?.total ?? totals.total });
       } else {
-        finishOrder(targetOrderId);
+        finishOrder(res.orderId);
       }
     } catch (err) {
       if (err instanceof ApiError && err.data?.code === 'PRICE_CHANGED' && err.data?.totals) {
         setPriceChange(err.data.totals as OrderTotals);
       } else {
-        toast.error(err instanceof Error ? err.message : 'Could not place your order. Please try again.', { duration: 6000 });
+        toast.error(err instanceof Error && err.message ? err.message : 'Could not place your order. Please try again.', { duration: 6000 });
       }
     } finally {
       placingRef.current = false;
@@ -560,21 +583,13 @@ export const Cart: React.FC = () => {
     }
   };
 
+  // Only the server can mark an order as paid: it verifies the payment with Stripe.
   const onPaid = async (orderId: string) => {
-    try {
-      await updateDoc(doc(db, 'orders', orderId), {
-        status: 'new',
-        paymentStatus: 'paid',
-        paidAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // Ignored if already captured
-    }
     try {
       await api.confirmPayment(orderId);
     } catch {
-      // The order page re-checks the payment, and the Stripe webhook also confirms it.
+      // The order page re-checks the payment, and the server also confirms it on its own
+      // (Stripe webhook / periodic check), so a dropped connection here loses nothing.
     }
     setPayment(null);
     finishOrder(orderId);
@@ -582,16 +597,12 @@ export const Cart: React.FC = () => {
 
   const onCancelPayment = () => {
     if (payment) {
-      updateDoc(doc(db, 'orders', payment.orderId), {
-        status: 'cancelled',
-        paymentStatus: 'failed',
-        cancelledBy: 'customer',
-        cancelReason: 'Checkout was not completed',
-        updatedAt: serverTimestamp(),
-      }).catch(() => undefined);
-      api.abandon(payment.orderId).catch(() => undefined);
+      // Keep the pending id if this fails: the next checkout asks the server to release it.
+      api
+        .abandon(payment.orderId)
+        .then(() => writePending(null))
+        .catch(() => undefined);
     }
-    writePending(null);
     setPayment(null);
   };
 
@@ -612,12 +623,8 @@ export const Cart: React.FC = () => {
     );
   }
 
-  const ctaLabel = !userProfile
-    ? 'Sign in to order'
-    : paymentMethod === 'cash'
-      ? `Place Order (${formatMoney(totals.total)})`
-      : `Place Order (${formatMoney(totals.total)})`;
-  const ctaDisabled = placing || authLoading || (!!userProfile && blockers.length > 0);
+  const ctaLabel = !userProfile ? 'Sign in to order' : `Place Order (${formatMoney(totals.total)})`;
+  const ctaDisabled = placing || authLoading || (!!userProfile && (configPending || blockers.length > 0));
 
   const cta = (
     <button
@@ -717,11 +724,11 @@ export const Cart: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => removeFromCart(line.cartItemId)}
-                          className="p-1 text-muted hover:text-red-600 transition shrink-0"
+                          className="-m-2 p-2.5 text-muted hover:text-red-600 transition shrink-0"
                           aria-label={`Remove ${line.name}`}
                           disabled={!!payment}
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={16} />
                         </button>
                       </div>
 
@@ -740,25 +747,25 @@ export const Cart: React.FC = () => {
                       {/* Kupa Inline Circle Stepper + Emerald Green Price */}
                       <div className="mt-2.5 flex items-center gap-4">
                         {!unavailable && (
-                          <div className="inline-flex items-center gap-2.5">
+                          <div className="inline-flex items-center gap-2">
                             <button
                               type="button"
                               onClick={() => updateQuantity(line.cartItemId, line.quantity - 1)}
-                              className="w-7 h-7 rounded-full bg-soft text-ink flex items-center justify-center transition active:scale-90"
+                              className="w-9 h-9 rounded-full bg-soft text-ink flex items-center justify-center transition active:scale-90"
                               aria-label={`Decrease ${line.name}`}
                               disabled={!!payment}
                             >
-                              <Minus size={13} strokeWidth={2.5} />
+                              <Minus size={15} strokeWidth={2.5} />
                             </button>
-                            <span className="min-w-4 text-center text-sm font-bold font-mono tabular-nums">{line.quantity}</span>
+                            <span className="min-w-5 text-center text-sm font-bold font-mono tabular-nums">{line.quantity}</span>
                             <button
                               type="button"
                               onClick={() => updateQuantity(line.cartItemId, line.quantity + 1)}
-                              className="w-7 h-7 rounded-full bg-brand text-on-brand flex items-center justify-center transition active:scale-90"
+                              className="w-9 h-9 rounded-full bg-brand text-on-brand flex items-center justify-center transition active:scale-90 disabled:opacity-40"
                               aria-label={`Increase ${line.name}`}
-                              disabled={!!payment}
+                              disabled={!!payment || line.quantity >= MAX_LINE_QUANTITY}
                             >
-                              <Plus size={13} strokeWidth={2.5} />
+                              <Plus size={15} strokeWidth={2.5} />
                             </button>
                           </div>
                         )}
@@ -892,6 +899,7 @@ export const Cart: React.FC = () => {
                       onChange={(e) => setAddress(e.target.value)}
                       placeholder="Delivery address (street, apt, city)"
                       autoComplete="street-address"
+                      enterKeyHint="done"
                       maxLength={500}
                       aria-label="Delivery address"
                     />
@@ -987,11 +995,11 @@ export const Cart: React.FC = () => {
                         {!userProfile ? 'Sign in to use this code.' : !promoLoaded ? 'Checking…' : promoProblem || `You save ${formatMoney(fromCents(discountCents))}`}
                       </div>
                     </div>
-                    <button onClick={() => setPromoCode(null)} className="p-1 text-muted hover:text-ink" aria-label="Remove promo code">
+                    <button onClick={() => setPromoCode(null)} className="-m-1.5 p-2.5 text-muted hover:text-ink" aria-label="Remove promo code">
                       <X size={16} />
                     </button>
                   </div>
-                ) : (
+                ) : !promosAvailable ? null : (
                   <form
                     className="flex gap-2"
                     onSubmit={(e) => {
@@ -1012,9 +1020,13 @@ export const Cart: React.FC = () => {
                       placeholder="Promo code"
                       className={`${inputCls} uppercase`}
                       aria-label="Promo code"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      enterKeyHint="go"
                       maxLength={50}
                     />
-                    <button type="submit" disabled={!promoInput.trim()} className="px-4 rounded-xl bg-soft font-semibold text-sm disabled:opacity-50">
+                    <button type="submit" disabled={!promoInput.trim()} className="shrink-0 px-4 rounded-xl bg-soft font-semibold text-sm disabled:opacity-50">
                       Apply
                     </button>
                   </form>
@@ -1051,7 +1063,7 @@ export const Cart: React.FC = () => {
       </div>
 
       {/* Mobile sticky checkout bar positioned cleanly above the BottomNav */}
-      <div className="lg:hidden fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-30 bg-card/95 backdrop-blur-xl border-t border-line px-4 py-3">
+      <div className="lg:hidden fixed inset-x-0 bottom-[calc(58px+env(safe-area-inset-bottom))] md:bottom-0 z-30 bg-card/95 backdrop-blur-xl border-t border-line px-4 py-3 md:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {blockers.length > 0 && userProfile && <p className="text-[11px] font-semibold text-red-700 mb-2 text-center">{blockers[0]}</p>}
         {cta}
       </div>

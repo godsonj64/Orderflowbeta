@@ -32,7 +32,7 @@ await env.withSecurityRulesDisabled(async (ctx) => {
     user('cust1', 'customer'),
     user('cust2', 'customer'),
   ]);
-  await setDoc(doc(db, 'restaurant', 'profile'), { name: 'Huddle', isAcceptingOrders: true, averageRating: 4.5, totalRatings: 10 });
+  await setDoc(doc(db, 'restaurant', 'profile'), { name: 'Huddle', isAcceptingOrders: true, isCashPaymentEnabled: true, averageRating: 4.5, totalRatings: 10 });
   await setDoc(doc(db, 'categories', 'mains'), { name: 'Mains', displayOrder: 0, active: true });
   await setDoc(doc(db, 'items', 'burger'), { categoryId: 'mains', name: 'Burger', basePrice: 10, active: true, rating: 4.2, ratingCount: 3, soldCount: 5 });
   await setDoc(doc(db, 'orders', 'CARD01'), baseOrder({ paymentMethod: 'card', paymentStatus: 'paid', paymentIntentId: 'pi_1' }));
@@ -40,6 +40,12 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'orders', 'CASH01'), baseOrder({ type: 'delivery', deliveryAddress: '1 Main St', paymentMethod: 'cash', paymentStatus: 'pending', status: 'ready' }));
   await setDoc(doc(db, 'orders', 'CASH02'), baseOrder({ paymentMethod: 'cash', paymentStatus: 'pending' }));
   await setDoc(doc(db, 'orders', 'LEGACY'), baseOrder({ paymentStatus: 'paid', paymentIntentId: 'pi_legacy' })); // no paymentMethod field
+  await setDoc(doc(db, 'orders', 'CASH03'), baseOrder({ paymentMethod: 'cash', paymentStatus: 'pending' }));
+  await setDoc(doc(db, 'orders', 'CASHPAID'), baseOrder({ paymentMethod: 'cash', paymentStatus: 'paid' }));
+  await setDoc(doc(db, 'orders', 'NEWDEL'), baseOrder({ type: 'delivery', deliveryAddress: '2 Main St', paymentMethod: 'card', paymentStatus: 'paid' }));
+  await setDoc(doc(db, 'orders', 'PENDDEL'), baseOrder({ type: 'delivery', deliveryAddress: '3 Main St', status: 'payment_pending', paymentMethod: 'card', paymentStatus: 'pending' }));
+  await setDoc(doc(db, 'orders', 'DONE01'), baseOrder({ status: 'completed', paymentMethod: 'card', paymentStatus: 'paid' }));
+  await setDoc(doc(db, 'orders', 'DELIV1'), baseOrder({ type: 'delivery', deliveryAddress: '4 Main St', status: 'out_for_delivery', driverId: 'driver1', paymentMethod: 'card', paymentStatus: 'paid' }));
   await setDoc(doc(db, 'promos', 'SAVE5'), { id: 'SAVE5', discountType: 'fixed', discountValue: 5, active: true, usedCount: 0, usedBy: [], createdAt: now });
 });
 
@@ -72,18 +78,61 @@ await check('anyone can read the menu and profile', async () => {
 });
 
 console.log('\nOrders: customers');
-await check('customer can create own valid order', () =>
-  assertSucceeds(setDoc(doc(customer, 'orders', 'NEW01'), baseOrder({ customerId: 'cust1', status: 'new', paymentMethod: 'cash', paymentStatus: 'pending', createdAt: now }))));
+// Basic mode (server without database access): unpaid cash orders only.
+const directOrder = (over = {}) => {
+  const { createdAt: _c, ...rest } = baseOrder({ customerId: 'cust1', status: 'new', paymentMethod: 'cash', paymentStatus: 'pending' });
+  return { ...rest, createdAt: serverTimestamp(), ...over };
+};
+await check('customer can place an unpaid cash order directly (basic mode)', () =>
+  assertSucceeds(setDoc(doc(customer, 'orders', 'NEW01'), directOrder())));
 await check('customer cannot create order for someone else', () =>
-  assertFails(setDoc(doc(customer, 'orders', 'HACK01'), baseOrder({ customerId: 'cust2', status: 'new', paymentMethod: 'cash', paymentStatus: 'pending', createdAt: now }))));
+  assertFails(setDoc(doc(customer, 'orders', 'HACK01'), directOrder({ customerId: 'cust2' }))));
+await check('customer cannot create an order that is already paid', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK02'), directOrder({ paymentStatus: 'paid' }))));
+await check('customer cannot create a card order directly (no payment was taken)', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK03'), directOrder({ paymentMethod: 'card', paymentStatus: 'paid', paymentIntentId: 'pi_fake' }))));
+await check('customer cannot create an unpaid card checkout directly', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK04'), directOrder({ paymentMethod: 'card', status: 'payment_pending' }))));
+await check('customer cannot give themselves a discount', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK05'), directOrder({ discountAmount: 9, promoCode: 'SAVE5', total: 1 }))));
+await check('customer cannot undercut the subtotal', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK06'), directOrder({ total: 0.01 }))));
+await check('customer cannot smuggle extra fields into an order', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK07'), directOrder({ driverId: 'cust1', rating: 5, refundAmount: 10 }))));
+await check('customer cannot backdate an order', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'HACK08'), directOrder({ createdAt: Timestamp.fromMillis(Date.now() - 86400000) }))));
 await check('customer can read own order', () => assertSucceeds(getDoc(doc(customer, 'orders', 'CARD01'))));
 await check('customer cannot read someone else\'s order', () => assertFails(getDoc(doc(other, 'orders', 'CARD01'))));
 await check('customer can list own orders (no composite index needed)', () =>
   assertSucceeds(getDocs(query(collection(customer, 'orders'), where('customerId', '==', 'cust1')))));
 await check('customer cannot mark a pending order as paid', () =>
   assertFails(updateDoc(doc(customer, 'orders', 'PEND01'), { status: 'new', paymentStatus: 'paid', updatedAt: serverTimestamp() })));
+await check('customer cannot push an unpaid card checkout to the kitchen', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'PEND01'), { status: 'new', updatedAt: serverTimestamp() })));
+await check('customer cannot mark their cash order as paid', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'CASH03'), { paymentStatus: 'paid', paidAt: serverTimestamp() })));
+await check('customer cannot change the total of their order', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'CASH03'), { total: 1 })));
 await check('customer cannot cancel directly (refunds happen on the server)', () =>
   assertFails(updateDoc(doc(customer, 'orders', 'CARD01'), { status: 'cancelled' })));
+await check('customer cannot cancel a cash order that was already paid', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'CASHPAID'), { status: 'cancelled', cancelledBy: 'customer' })));
+await check('customer cannot cancel someone else\'s order', () =>
+  assertFails(updateDoc(doc(other, 'orders', 'CASH03'), { status: 'cancelled', cancelledBy: 'customer' })));
+await check('customer cannot pose as staff when cancelling', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'CASH03'), { status: 'cancelled', cancelledBy: 'staff' })));
+await check('customer can cancel an unpaid cash order before it is accepted', () =>
+  assertSucceeds(updateDoc(doc(customer, 'orders', 'CASH03'), { status: 'cancelled', cancelledBy: 'customer', cancelReason: 'Changed my mind', updatedAt: serverTimestamp() })));
+await check('customer can move the delivery pin on an active delivery', () =>
+  assertSucceeds(updateDoc(doc(customer, 'orders', 'NEWDEL'), { deliveryLocation: { lat: 30.26, lng: -97.74, updatedAt: Date.now() }, updatedAt: serverTimestamp() })));
+await check('customer cannot fake the driver position', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'NEWDEL'), { driverLocation: { lat: 30.26, lng: -97.74 } })));
+await check('customer can rate a completed order once', async () => {
+  await assertSucceeds(updateDoc(doc(customer, 'orders', 'DONE01'), { rating: 5, ratingComment: 'Great', ratedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(customer, 'orders', 'DONE01'), { rating: 1 }));
+});
+await check('customer cannot rate an order that is not finished', () =>
+  assertFails(updateDoc(doc(customer, 'orders', 'CARD01'), { rating: 5 })));
 
 console.log('\nOrders: staff');
 await check('staff can move an order through the kitchen', () =>
@@ -121,10 +170,38 @@ await check('driver can record cash collected', () =>
   assertSucceeds(updateDoc(doc(driver, 'orders', 'CASH01'), { paymentStatus: 'paid', paidAt: serverTimestamp(), paymentCollectedBy: 'Dee' })));
 await check('driver cannot change the total', () => assertFails(updateDoc(doc(driver, 'orders', 'CASH01'), { total: 0 })));
 await check('driver cannot cancel orders', () => assertFails(updateDoc(doc(driver, 'orders', 'CASH01'), { status: 'cancelled' })));
+await check('driver cannot pull an order the kitchen has not started', () =>
+  assertFails(updateDoc(doc(driver, 'orders', 'NEWDEL'), { status: 'preparing', driverId: 'driver1', driverName: 'Dee' })));
+await check('driver cannot push an unpaid checkout to the kitchen', () =>
+  assertFails(updateDoc(doc(driver, 'orders', 'PENDDEL'), { status: 'preparing', driverId: 'driver1', driverName: 'Dee' })));
+await check('driver can share live GPS on their delivery', () =>
+  assertSucceeds(updateDoc(doc(driver, 'orders', 'DELIV1'), { driverLocation: { lat: 30.27, lng: -97.74, accuracy: 12, heading: null, speed: 4.2, updatedAt: Date.now() } })));
+await check('another driver cannot take over a claimed delivery', () =>
+  assertFails(updateDoc(doc(as('driver2'), 'orders', 'DELIV1'), { driverId: 'driver2', driverName: 'Eve' })));
 await check('driver can complete with a large proof-of-delivery photo', () =>
   assertSucceeds(updateDoc(doc(driver, 'orders', 'CASH01'), {
     status: 'completed', deliveryStatus: 'delivered', proofOfDeliveryImage: 'data:image/jpeg;base64,' + 'A'.repeat(400000), updatedAt: serverTimestamp(),
   })));
+
+await check('driver cannot reopen a completed delivery', () =>
+  assertFails(updateDoc(doc(driver, 'orders', 'CASH01'), { status: 'out_for_delivery' })));
+
+console.log('\nProof of delivery photos');
+const photo = 'data:image/webp;base64,' + 'A'.repeat(2000);
+await check('assigned driver can save a proof photo', () =>
+  assertSucceeds(setDoc(doc(driver, 'orders', 'DELIV1', 'proof', 'photo'), { image: photo, driverId: 'driver1', driverName: 'Dee', createdAt: serverTimestamp() })));
+await check('a driver cannot attach photos to deliveries that are not theirs', () =>
+  assertFails(setDoc(doc(as('driver2'), 'orders', 'DELIV1', 'proof', 'photo'), { image: photo, driverId: 'driver2' })));
+await check('customers cannot upload proof photos', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'DELIV1', 'proof', 'photo'), { image: photo })));
+await check('proof must be an image', () =>
+  assertFails(setDoc(doc(driver, 'orders', 'DELIV1', 'proof', 'photo'), { image: 'javascript:alert(1)' })));
+await check('the customer and staff can see the proof photo', async () => {
+  await assertSucceeds(getDoc(doc(customer, 'orders', 'DELIV1', 'proof', 'photo')));
+  await assertSucceeds(getDoc(doc(staff, 'orders', 'DELIV1', 'proof', 'photo')));
+});
+await check('other customers cannot see the proof photo', () =>
+  assertFails(getDoc(doc(other, 'orders', 'DELIV1', 'proof', 'photo'))));
 
 console.log('\nOrders: payment bypass attempts');
 await check('staff cannot push an unpaid checkout to the kitchen', () =>
@@ -162,6 +239,15 @@ await check('manager cannot fake the average rating', () => assertFails(updateDo
 await check('tax rate must be sane', () => assertFails(updateDoc(doc(manager, 'restaurant', 'profile'), { taxRate: 80 })));
 await check('customers cannot change the profile', () => assertFails(updateDoc(doc(customer, 'restaurant', 'profile'), { isAcceptingOrders: false })));
 
+console.log('\nBasic mode follows the store settings');
+await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'restaurant', 'profile'), { isCashPaymentEnabled: false }));
+await check('no direct cash orders when the owner turned cash off', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'NEW02'), directOrder())));
+await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'restaurant', 'profile'), { isCashPaymentEnabled: true, isAcceptingOrders: false }));
+await check('no direct orders while ordering is switched off', () =>
+  assertFails(setDoc(doc(customer, 'orders', 'NEW03'), directOrder())));
+await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'restaurant', 'profile'), { isAcceptingOrders: true }));
+
 console.log('\nMenu');
 await check('staff can mark an item sold out', () => assertSucceeds(updateDoc(doc(staff, 'items', 'burger'), { isSoldOut: true })));
 await check('staff cannot change prices', () => assertFails(updateDoc(doc(staff, 'items', 'burger'), { basePrice: 1 })));
@@ -175,6 +261,10 @@ console.log('\nPromos');
 await check('signed-in customers can read promos', () => assertSucceeds(getDoc(doc(customer, 'promos', 'SAVE5'))));
 await check('customers cannot mark promos as used', () =>
   assertFails(updateDoc(doc(customer, 'promos', 'SAVE5'), { usedCount: 1, usedBy: ['cust1'] })));
+await check('customers cannot reset their own promo usage', () =>
+  assertFails(updateDoc(doc(customer, 'promos', 'SAVE5'), { usedBy: [] })));
+await check('customers cannot exhaust a promo for everyone', () =>
+  assertFails(updateDoc(doc(customer, 'promos', 'SAVE5'), { usedCount: 100000 })));
 await check('manager can create a promo', () =>
   assertSucceeds(setDoc(doc(manager, 'promos', 'TEN'), { id: 'TEN', discountType: 'percentage', discountValue: 10, active: true, usedCount: 0, usedBy: [], minSubtotal: 20, createdAt: serverTimestamp() })));
 await check('percentage promos cannot exceed 100%', () =>

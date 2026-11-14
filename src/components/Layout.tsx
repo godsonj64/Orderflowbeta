@@ -110,8 +110,10 @@ function Header() {
           {!isHome ? (
             <button
               type="button"
-              onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}
-              className="md:hidden w-9 h-9 rounded-full hover:bg-soft flex items-center justify-center text-ink transition"
+              // location.key is "default" on the first page of this visit: going "back"
+              // from there would leave the store (e.g. to the app that opened the link).
+              onClick={() => (location.key !== 'default' ? navigate(-1) : navigate('/'))}
+              className="md:hidden w-10 h-10 -ml-1.5 rounded-full hover:bg-soft flex items-center justify-center text-ink transition"
               aria-label="Go back"
             >
               <ArrowLeft size={20} />
@@ -166,12 +168,12 @@ function Header() {
           {/* Mobile notification / active orders bell (matches Kupa top-right bell icon) */}
           <Link
             to="/my-orders"
-            className="md:hidden relative w-9 h-9 rounded-full hover:bg-soft flex items-center justify-center text-ink transition"
+            className="md:hidden relative w-10 h-10 -mr-1.5 rounded-full hover:bg-soft flex items-center justify-center text-ink transition"
             aria-label="Your orders"
             title={status.badge}
           >
             <Bell size={19} strokeWidth={2} />
-            {status.state === 'open' && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-brand ring-2 ring-card" />}
+            {status.state === 'open' && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-brand ring-2 ring-card" />}
           </Link>
 
           <Link
@@ -437,7 +439,7 @@ export const Layout: React.FC = () => {
       <div className="min-h-[100dvh] bg-page text-ink font-sans flex flex-col">
         <AnnouncementBar />
         <Header />
-        <main className={`flex-grow w-full max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-7 ${isCartPage ? 'pb-48' : 'pb-28'} md:pb-12`}>
+        <main className={`flex-grow w-full max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-7 ${isCartPage ? 'pb-48 md:pb-36 lg:pb-12' : 'pb-28 md:pb-12'}`}>
           <Outlet />
         </main>
         <Footer />

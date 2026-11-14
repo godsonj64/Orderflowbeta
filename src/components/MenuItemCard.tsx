@@ -73,7 +73,7 @@ function AddButton({ item, canAdd, onQuickAdd, onOpen, className = '' }: Omit<Ca
       }}
       disabled={disabled}
       aria-label={hasOptions ? `Choose options for ${item.name}` : `Add ${item.name} to cart`}
-      className={`w-9 h-9 rounded-full flex items-center justify-center shadow-sm transition active:scale-90 bg-brand text-on-brand disabled:opacity-40 disabled:shadow-none ${className}`}
+      className={`w-9 h-9 shrink-0 rounded-full flex items-center justify-center shadow-sm transition active:scale-90 bg-brand text-on-brand disabled:opacity-40 disabled:shadow-none after:absolute after:-inset-2 after:content-[''] ${className}`}
     >
       <Plus size={18} strokeWidth={2.5} />
     </button>
@@ -138,7 +138,7 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
           </div>
         </div>
         <span className="font-bold text-sm text-brand font-mono tabular-nums whitespace-nowrap">{fromPrice}</span>
-        <AddButton {...props} className="w-8 h-8" />
+        <AddButton {...props} className="relative" />
       </div>
     );
   }
@@ -179,7 +179,7 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
           </div>
           <div className="mt-2 flex items-center justify-between gap-2">
             <span className="font-bold text-sm text-brand font-mono tabular-nums">{fromPrice}</span>
-            <AddButton {...props} className="w-8 h-8" />
+            <AddButton {...props} className="relative" />
           </div>
         </div>
       </div>
@@ -210,7 +210,7 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
             <SoldOutBadge />
           </span>
         )}
-        <AddButton {...props} className="absolute bottom-2.5 right-2.5 w-8 h-8 ring-2 ring-card" />
+        <AddButton {...props} className="absolute bottom-2.5 right-2.5 ring-2 ring-card" />
       </div>
       <div className="pt-2.5 px-0.5 flex flex-col gap-0.5">
         <h3 className="font-semibold text-[14px] sm:text-[15px] text-ink leading-snug truncate">

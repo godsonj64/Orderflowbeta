@@ -7,6 +7,7 @@ import { useStore } from '../context/StoreContext';
 import { prepMinutes } from '../lib/storeStatus';
 import { formatTimeLabel } from '../lib/hours';
 import { friendlyError, reportError } from '../utils/errorHandling';
+import { undoToast } from '../lib/undoToast';
 
 /** Compact operational strip for busy services (staff and above). */
 export function StoreControls({ dark = false }: { dark?: boolean }) {
@@ -29,10 +30,26 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
       } else {
         await updateDoc(ref, patch as Record<string, unknown>);
       }
+      return true;
     } catch (err) {
       reportError(err, 'store-controls', { message: friendlyError(err, 'Could not update the store.') });
+      return false;
     } finally {
       setBusy(false);
+    }
+  };
+
+  // These two switches stop orders for the whole store with a single tap, so a slip of
+  // the finger on a busy tablet must be easy to notice and take back.
+  const toggleAccepting = async () => {
+    const turningOff = !!profile.isAcceptingOrders;
+    if ((await update({ isAcceptingOrders: !turningOff })) && turningOff) {
+      undoToast('store-accepting', 'Online ordering is OFF. Customers cannot order.', () => void update({ isAcceptingOrders: true }), 8000);
+    }
+  };
+  const pauseFor = async (minutes: number) => {
+    if (await update({ pausedUntil: Timestamp.fromMillis(Date.now() + minutes * 60_000) })) {
+      undoToast('store-paused', `New orders paused for ${minutes === 60 ? '1 hour' : `${minutes} minutes`}.`, () => void update({ pausedUntil: null }), 8000);
     }
   };
 
@@ -52,8 +69,8 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
         <button
           type="button"
           disabled={busy}
-          onClick={() => update({ isAcceptingOrders: !accepting })}
-          className={`min-h-[38px] flex items-center gap-2 rounded-xl px-3.5 py-2 font-bold text-xs sm:text-sm transition whitespace-nowrap shrink-0 ${
+          onClick={toggleAccepting}
+          className={`min-h-[42px] flex items-center gap-2 rounded-xl px-3.5 py-2 font-bold text-xs sm:text-sm transition whitespace-nowrap shrink-0 ${
             accepting ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'
           }`}
           role="switch"
@@ -70,20 +87,20 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
             type="button"
             disabled={busy || prep <= 5}
             onClick={() => update({ estimatedPrepMinutes: Math.max(5, prep - 5) })}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-40 ${chip}`}
+            className={`w-10 h-10 rounded-lg flex items-center justify-center disabled:opacity-40 ${chip}`}
             aria-label="Shorter wait"
           >
-            <Minus size={14} />
+            <Minus size={16} />
           </button>
-          <span className="min-w-[44px] text-center text-xs font-bold font-mono tabular-nums">{prep}m</span>
+          <span className="min-w-[40px] text-center text-xs font-bold font-mono tabular-nums">{prep}m</span>
           <button
             type="button"
             disabled={busy || prep >= 240}
             onClick={() => update({ estimatedPrepMinutes: Math.min(240, prep + 5) })}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-40 ${chip}`}
+            className={`w-10 h-10 rounded-lg flex items-center justify-center disabled:opacity-40 ${chip}`}
             aria-label="Longer wait"
           >
-            <Plus size={14} />
+            <Plus size={16} />
           </button>
         </div>
       </div>
@@ -99,7 +116,7 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
               type="button"
               disabled={busy}
               onClick={() => update({ pausedUntil: null })}
-              className="min-h-[34px] rounded-xl px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap shrink-0"
+              className="min-h-[40px] rounded-xl px-3.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap shrink-0"
             >
               Resume now
             </button>
@@ -112,8 +129,8 @@ export function StoreControls({ dark = false }: { dark?: boolean }) {
                 key={m}
                 type="button"
                 disabled={busy || !accepting}
-                onClick={() => update({ pausedUntil: Timestamp.fromMillis(Date.now() + m * 60_000) })}
-                className={`min-h-[34px] rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums transition disabled:opacity-40 whitespace-nowrap shrink-0 ${chip}`}
+                onClick={() => pauseFor(m)}
+                className={`min-h-[40px] rounded-lg px-3 py-1 text-xs font-semibold tabular-nums transition disabled:opacity-40 whitespace-nowrap shrink-0 ${chip}`}
               >
                 {m === 60 ? '1 hr' : `${m} min`}
               </button>
