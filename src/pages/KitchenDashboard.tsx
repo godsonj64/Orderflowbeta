@@ -282,7 +282,7 @@ export const KitchenDashboard: React.FC = () => {
       <StoreControls dark />
 
       {/* Phones: 4-column segmented stage switcher — all stages visible at once */}
-      <div className="lg:hidden grid grid-cols-4 gap-1 p-1 bg-[#1D261F] border border-white/10 rounded-2xl">
+      <div className="lg:hidden grid grid-cols-4 gap-1 p-1 bg-[#1D261F] border border-white/10 rounded-btn">
         {COLUMNS.map((c) => {
           const n = byColumn.get(c.id)?.length || 0;
           const active = tab === c.id;

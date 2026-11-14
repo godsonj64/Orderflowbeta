@@ -11,16 +11,10 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { CookieConsent } from './components/CookieConsent';
 import { PageSpinner } from './components/ui';
 import { Home } from './pages/Home';
-import { Cart } from './pages/Cart';
-import { OrderTracker } from './pages/OrderTracker';
-import { MyOrders } from './pages/MyOrders';
-import { OrderSuccess } from './pages/OrderSuccess';
-import { PrivacyPolicy } from './pages/PrivacyPolicy';
-import { TermsOfService } from './pages/TermsOfService';
-import { CookiePolicy } from './pages/CookiePolicy';
 import { MANAGER_ROLES, STAFF_ROLES, type UserRole } from './types';
 
-// Admin screens are code-split so customers on phones only download the storefront.
+// Secondary storefront screens and admin screens are code-split so new devices on mobile
+// networks only download the Home storefront bundle on initial paint.
 const RELOAD_KEY = 'orderflow_reloaded_for_update';
 function lazyNamed<T extends Record<string, any>>(loader: () => Promise<T>, name: keyof T) {
   return lazy(() =>
@@ -50,6 +44,15 @@ function lazyNamed<T extends Record<string, any>>(loader: () => Promise<T>, name
     ),
   );
 }
+
+const Cart = lazyNamed(() => import('./pages/Cart'), 'Cart');
+const OrderTracker = lazyNamed(() => import('./pages/OrderTracker'), 'OrderTracker');
+const MyOrders = lazyNamed(() => import('./pages/MyOrders'), 'MyOrders');
+const OrderSuccess = lazyNamed(() => import('./pages/OrderSuccess'), 'OrderSuccess');
+const PrivacyPolicy = lazyNamed(() => import('./pages/PrivacyPolicy'), 'PrivacyPolicy');
+const TermsOfService = lazyNamed(() => import('./pages/TermsOfService'), 'TermsOfService');
+const CookiePolicy = lazyNamed(() => import('./pages/CookiePolicy'), 'CookiePolicy');
+
 const AdminDashboard = lazyNamed(() => import('./pages/AdminDashboard'), 'AdminDashboard');
 const KitchenDashboard = lazyNamed(() => import('./pages/KitchenDashboard'), 'KitchenDashboard');
 const AdminMenu = lazyNamed(() => import('./pages/AdminMenu'), 'AdminMenu');
@@ -92,6 +95,8 @@ function NotFound() {
   );
 }
 
+const page = (element: React.ReactNode) => <Suspense fallback={<PageSpinner />}>{element}</Suspense>;
+
 const admin = (element: React.ReactNode, roles: UserRole[] = STAFF_ROLES) => (
   <RequireRole roles={roles}>
     <Suspense fallback={<PageSpinner />}>{element}</Suspense>
@@ -99,6 +104,23 @@ const admin = (element: React.ReactNode, roles: UserRole[] = STAFF_ROLES) => (
 );
 
 export default function App() {
+  // Warm the Cart chunk during browser idle time so opening the cart feels instantaneous.
+  useEffect(() => {
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const preload = () => {
+      void import('./pages/Cart').catch(() => undefined);
+    };
+    if (typeof win.requestIdleCallback === 'function') {
+      const id = win.requestIdleCallback(preload, { timeout: 2500 });
+      return () => win.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(preload, 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>
@@ -114,13 +136,13 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Layout />}>
                   <Route index element={<Home />} />
-                  <Route path="cart" element={<Cart />} />
-                  <Route path="order/:orderId" element={<OrderTracker />} />
-                  <Route path="my-orders" element={<MyOrders />} />
-                  <Route path="order-success" element={<OrderSuccess />} />
-                  <Route path="privacy-policy" element={<PrivacyPolicy />} />
-                  <Route path="terms-of-service" element={<TermsOfService />} />
-                  <Route path="cookie-policy" element={<CookiePolicy />} />
+                  <Route path="cart" element={page(<Cart />)} />
+                  <Route path="order/:orderId" element={page(<OrderTracker />)} />
+                  <Route path="my-orders" element={page(<MyOrders />)} />
+                  <Route path="order-success" element={page(<OrderSuccess />)} />
+                  <Route path="privacy-policy" element={page(<PrivacyPolicy />)} />
+                  <Route path="terms-of-service" element={page(<TermsOfService />)} />
+                  <Route path="cookie-policy" element={page(<CookiePolicy />)} />
                   <Route path="*" element={<NotFound />} />
                 </Route>
 

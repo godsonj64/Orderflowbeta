@@ -610,18 +610,74 @@ async function startServer() {
   // sends item ids, quantities and choices.
   // -------------------------------------------------------------------------
 
-  // 3-second micro-cache for restaurant/profile so simultaneous rush-hour checkouts
-  // and initial splash screen loads don't hammer the single profile document on every request.
-  let cachedProfile: { at: number; data: RestaurantProfile | null } | null = null;
+  // 3-second micro-cache + single-flight promise coalescing for restaurant/profile and
+  // catalog bootstrap so simultaneous rush-hour checkouts and cold-start device loads
+  // coalesce into a single Firestore read instead of amplifying load.
+  const STORE_CACHE_TTL_MS = 3000;
+  let cachedProfile: { at: number; data: RestaurantProfile } | null = null;
+  let profileInFlight: Promise<RestaurantProfile> | null = null;
+
   async function loadRestaurantProfile(): Promise<RestaurantProfile> {
-    if (cachedProfile && Date.now() - cachedProfile.at < 3000 && cachedProfile.data) {
+    if (cachedProfile && Date.now() - cachedProfile.at < STORE_CACHE_TTL_MS) {
       return cachedProfile.data;
     }
-    const snap = await db.doc('restaurant/profile').get();
-    // A store that has not saved its settings yet runs on the same defaults the storefront shows.
-    const data = snap.exists ? (snap.data() as RestaurantProfile) : DEFAULT_RESTAURANT_PROFILE;
-    cachedProfile = { at: Date.now(), data };
-    return data;
+    if (profileInFlight) return profileInFlight;
+    profileInFlight = db
+      .doc('restaurant/profile')
+      .get()
+      .then((snap) => {
+        // A store that has not saved its settings yet runs on the same defaults the storefront shows.
+        const data = snap.exists ? (snap.data() as RestaurantProfile) : DEFAULT_RESTAURANT_PROFILE;
+        cachedProfile = { at: Date.now(), data };
+        return data;
+      })
+      .catch((err) => {
+        if (cachedProfile?.data) return cachedProfile.data;
+        throw err;
+      })
+      .finally(() => {
+        profileInFlight = null;
+      });
+    return profileInFlight;
+  }
+
+  interface StoreBootstrap {
+    profile: RestaurantProfile;
+    categories: MenuCategory[];
+    items: MenuItem[];
+  }
+  let cachedBootstrap: { at: number; data: StoreBootstrap } | null = null;
+  let bootstrapInFlight: Promise<StoreBootstrap> | null = null;
+
+  async function loadStoreBootstrap(): Promise<StoreBootstrap> {
+    if (cachedBootstrap && Date.now() - cachedBootstrap.at < STORE_CACHE_TTL_MS) {
+      return cachedBootstrap.data;
+    }
+    if (bootstrapInFlight) return bootstrapInFlight;
+    bootstrapInFlight = Promise.all([
+      loadRestaurantProfile(),
+      db.collection('categories').orderBy('displayOrder').get(),
+      db.collection('items').get(),
+    ])
+      .then(([profile, catSnap, itemSnap]) => {
+        let categories = catSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<MenuCategory, 'id'>) }));
+        let items = itemSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<MenuItem, 'id'>) }));
+        if (categories.length === 0 && items.length === 0 && !profile?.starterMenuCleared) {
+          categories = DEFAULT_CATEGORIES;
+          items = DEFAULT_ITEMS;
+        }
+        const data: StoreBootstrap = { profile, categories, items };
+        cachedBootstrap = { at: Date.now(), data };
+        return data;
+      })
+      .catch((err) => {
+        if (cachedBootstrap?.data) return cachedBootstrap.data;
+        throw err;
+      })
+      .finally(() => {
+        bootstrapInFlight = null;
+      });
+    return bootstrapInFlight;
   }
 
   /** Totals as stored on an order (used when a repeated checkout returns the existing order). */
@@ -675,15 +731,22 @@ async function startServer() {
   }
 
   // What the storefront may offer right now. Card payments need the database: the
-  // server must be able to create the order and record the payment. The profile is
-  // included so the first paint (splash screen, theme) does not wait for Firestore.
+  // server must be able to create the order and record the payment. The profile,
+  // categories, and items are included so brand-new devices render the full storefront
+  // in a single fast HTTP round-trip without waiting for the Firestore WebChannel handshake.
   app.get(
     '/api/config',
     route(async (_req, res) => {
       const database = await hasDatabaseAccess();
-      const profile = database ? await loadRestaurantProfile().catch(() => null) : null;
+      const bootstrap = database ? await loadStoreBootstrap().catch(() => null) : null;
       res.set('Cache-Control', 'no-store');
-      res.json({ cardPayments: stripeEnabled() && database, ordering: database ? 'server' : 'direct', profile });
+      res.json({
+        cardPayments: stripeEnabled() && database,
+        ordering: database ? 'server' : 'direct',
+        profile: bootstrap?.profile ?? null,
+        categories: bootstrap?.categories,
+        items: bootstrap?.items,
+      });
     }),
   );
 
@@ -1179,9 +1242,12 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
     if (!stripeEnabled()) console.log('[server] STRIPE_SECRET_KEY is not set: card payments are disabled.');
-    // Warm the database check so the first storefront visit does not wait for it.
+    // Warm the database check and store bootstrap cache so the first storefront visit does not wait.
     void hasDatabaseAccess().then((ok) => {
-      if (ok) void sweepPendingPayments();
+      if (ok) {
+        void loadStoreBootstrap().catch(() => undefined);
+        void sweepPendingPayments();
+      }
     });
   });
   setInterval(() => void sweepPendingPayments(), PENDING_PAYMENT_SWEEP_EVERY_MS).unref();

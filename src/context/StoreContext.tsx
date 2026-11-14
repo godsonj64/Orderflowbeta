@@ -50,6 +50,12 @@ export const useStore = () => {
 
 const STRIPE_PUBLIC_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined;
 const PROFILE_CACHE_KEY = 'orderflow_cached_profile_v1';
+const CATALOG_CACHE_KEY = 'orderflow_cached_catalog_v1';
+
+interface CachedCatalog {
+  categories: MenuCategory[];
+  items: MenuItem[];
+}
 
 function readCachedProfile(): RestaurantProfile | null {
   try {
@@ -72,18 +78,48 @@ function writeCachedProfile(profile: RestaurantProfile | null) {
   }
 }
 
+function readCachedCatalog(): CachedCatalog | null {
+  try {
+    const raw = localStorage.getItem(CATALOG_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.items)) {
+      return { categories: parsed.categories as MenuCategory[], items: parsed.items as MenuItem[] };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedCatalog(categories: MenuCategory[], items: MenuItem[]) {
+  try {
+    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify({ categories, items }));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [rawProfile, setRawProfile] = useState<RestaurantProfile | null>(() => readCachedProfile());
+  const initialCachedProfile = useMemo(() => readCachedProfile(), []);
+  const initialCachedCatalog = useMemo(() => readCachedCatalog(), []);
+
+  const [rawProfile, setRawProfile] = useState<RestaurantProfile | null>(() => initialCachedProfile);
   const [profileExists, setProfileExists] = useState(false);
-  const [profileLoading, setProfileLoading] = useState(true);
-  const [rawCategories, setRawCategories] = useState<MenuCategory[]>([]);
-  const [rawItems, setRawItems] = useState<MenuItem[]>([]);
-  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
-  const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(() => !initialCachedProfile);
+  const [rawCategories, setRawCategories] = useState<MenuCategory[]>(() => initialCachedCatalog?.categories ?? []);
+  const [rawItems, setRawItems] = useState<MenuItem[]>(() => initialCachedCatalog?.items ?? []);
+  const [categoriesLoaded, setCategoriesLoaded] = useState(() => !!initialCachedCatalog);
+  const [itemsLoaded, setItemsLoaded] = useState(() => !!initialCachedCatalog);
   const [serverCard, setServerCard] = useState(false);
   const [serverReachable, setServerReachable] = useState(true);
   const [orderingMode, setOrderingMode] = useState<OrderingMode | null>(null);
   const [now, setNow] = useState(() => Date.now());
+
+  // Track whether live Firestore listeners have delivered authoritative snapshots yet so
+  // /api/config can hydrate cold devices without overwriting live Firestore updates.
+  const firestoreCategoriesRef = React.useRef<MenuCategory[] | null>(null);
+  const firestoreItemsRef = React.useRef<MenuItem[] | null>(null);
 
   useEffect(() => {
     const unsubProfile = onSnapshot(
@@ -103,8 +139,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const unsubCategories = onSnapshot(
       query(collection(db, 'categories'), orderBy('displayOrder')),
       (snap) => {
-        setRawCategories(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MenuCategory));
+        const nextCategories = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MenuCategory);
+        firestoreCategoriesRef.current = nextCategories;
+        setRawCategories(nextCategories);
         setCategoriesLoaded(true);
+        if (firestoreItemsRef.current !== null) {
+          writeCachedCatalog(nextCategories, firestoreItemsRef.current);
+        }
       },
       (err) => {
         reportError(err, 'store-categories', { toast: false, operationType: OperationType.LIST, path: 'categories' });
@@ -114,8 +155,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const unsubItems = onSnapshot(
       collection(db, 'items'),
       (snap) => {
-        setRawItems(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MenuItem));
+        const nextItems = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MenuItem);
+        firestoreItemsRef.current = nextItems;
+        setRawItems(nextItems);
         setItemsLoaded(true);
+        if (firestoreCategoriesRef.current !== null) {
+          writeCachedCatalog(firestoreCategoriesRef.current, nextItems);
+        }
       },
       (err) => {
         reportError(err, 'store-items', { toast: false, operationType: OperationType.LIST, path: 'items' });
@@ -177,12 +223,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setServerCard(!!cfg.cardPayments);
           setOrderingMode(cfg.ordering === 'direct' ? 'direct' : 'server');
           setServerReachable(true);
-          // The server's copy of the profile lets the first paint happen before the
-          // live Firestore connection is up.
+          // The server's copy of the profile + catalog lets the first paint happen on
+          // brand-new devices before the live Firestore WebChannel connection is up.
           if (cfg.profile?.name) {
             setRawProfile((prev) => prev || cfg.profile || null);
             writeCachedProfile(cfg.profile);
             setProfileLoading(false);
+          }
+          if (Array.isArray(cfg.categories) && firestoreCategoriesRef.current === null) {
+            setRawCategories(cfg.categories);
+            setCategoriesLoaded(true);
+          }
+          if (Array.isArray(cfg.items) && firestoreItemsRef.current === null) {
+            setRawItems(cfg.items);
+            setItemsLoaded(true);
+          }
+          if (
+            Array.isArray(cfg.categories) &&
+            Array.isArray(cfg.items) &&
+            firestoreCategoriesRef.current === null &&
+            firestoreItemsRef.current === null
+          ) {
+            writeCachedCatalog(cfg.categories, cfg.items);
           }
         })
         .catch(() => {

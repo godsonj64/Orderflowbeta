@@ -74,18 +74,26 @@ export const LoadingSplash: React.FC<LoadingSplashProps> = ({ waitForMenu = true
   const hasProfile = !!profile?.name;
   const dataReady = !profileLoading && (!waitForMenu || !menuLoading) && hasProfile;
 
-  const [minTimeReached, setMinTimeReached] = useState(() => initialSplashCompleted);
+  // When profile + menu are already ready on mount (from localStorage cache or pre-fetched
+  // /api/config), skip the splash immediately for an instant, zero-delay storefront render.
+  const [minTimeReached, setMinTimeReached] = useState(() => initialSplashCompleted || dataReady);
   const [safetyTimeoutReached, setSafetyTimeoutReached] = useState(false);
   const [fadingOut, setFadingOut] = useState(false);
-  const [unmounted, setUnmounted] = useState(() => initialSplashCompleted && dataReady);
+  const [unmounted, setUnmounted] = useState(() => {
+    if (dataReady) {
+      initialSplashCompleted = true;
+      return true;
+    }
+    return false;
+  });
 
-  // Once the restaurant profile is available, hold the splash for a brief, smooth beat
+  // Once the restaurant profile is available on a cold visit, hold for a crisp 120ms beat
   // so the Restaurant Name and subtitles read cleanly without flickering.
   useEffect(() => {
     if (!hasProfile || minTimeReached) return;
     const timer = window.setTimeout(() => {
       setMinTimeReached(true);
-    }, 520);
+    }, 120);
     return () => window.clearTimeout(timer);
   }, [hasProfile, minTimeReached]);
 
@@ -94,7 +102,7 @@ export const LoadingSplash: React.FC<LoadingSplashProps> = ({ waitForMenu = true
     if (unmounted) return;
     const timer = window.setTimeout(() => {
       setSafetyTimeoutReached(true);
-    }, 3200);
+    }, 2200);
     return () => window.clearTimeout(timer);
   }, [unmounted]);
 
@@ -106,7 +114,7 @@ export const LoadingSplash: React.FC<LoadingSplashProps> = ({ waitForMenu = true
     setFadingOut(true);
     const timer = window.setTimeout(() => {
       setUnmounted(true);
-    }, 320);
+    }, 180);
     return () => window.clearTimeout(timer);
   }, [readyToDismiss, unmounted]);
 
@@ -130,7 +138,7 @@ export const LoadingSplash: React.FC<LoadingSplashProps> = ({ waitForMenu = true
       role="status"
       aria-live="polite"
       aria-label={restaurantName ? `Loading ${restaurantName}` : 'Loading store'}
-      className={`fixed inset-0 z-[100] bg-page text-ink font-sans flex flex-col justify-between px-6 py-8 sm:py-12 select-none transition-all duration-300 ease-out ${
+      className={`fixed inset-0 z-[100] bg-page text-ink font-sans flex flex-col justify-between px-6 py-8 sm:py-12 select-none transition-all duration-200 ease-out ${
         fadingOut ? 'opacity-0 scale-[1.01] pointer-events-none' : 'opacity-100 scale-100'
       }`}
     >

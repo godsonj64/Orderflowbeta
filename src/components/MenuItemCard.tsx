@@ -56,6 +56,7 @@ interface CardProps {
   theme: ResolvedTheme;
   layout: MenuLayout;
   canAdd: boolean;
+  priority?: boolean;
   onOpen: (item: MenuItem) => void;
   onQuickAdd: (item: MenuItem) => void;
 }
@@ -109,7 +110,7 @@ function Placeholder({ name }: { name: string }) {
 }
 
 export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: CardProps) {
-  const { item, theme, layout, onOpen } = props;
+  const { item, theme, layout, priority = false, onOpen } = props;
   const [imgError, setImgError] = React.useState(false);
   React.useEffect(() => {
     setImgError(false);
@@ -155,7 +156,8 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
               <img
                 src={item.imageUrl}
                 alt=""
-                loading="lazy"
+                loading={priority ? 'eager' : 'lazy'}
+                fetchPriority={priority ? 'high' : 'auto'}
                 decoding="async"
                 onError={() => setImgError(true)}
                 className={`w-full h-full object-cover ${item.isSoldOut ? 'grayscale' : ''}`}
@@ -197,7 +199,8 @@ export const MenuItemCard = React.memo<CardProps>(function MenuItemCard(props: C
           <img
             src={item.imageUrl}
             alt=""
-            loading="lazy"
+            loading={priority ? 'eager' : 'lazy'}
+            fetchPriority={priority ? 'high' : 'auto'}
             decoding="async"
             onError={() => setImgError(true)}
             className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ${item.isSoldOut ? 'grayscale' : ''}`}

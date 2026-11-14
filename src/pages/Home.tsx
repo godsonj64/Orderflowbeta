@@ -628,10 +628,19 @@ export const Home: React.FC = () => {
         ? 'grid grid-cols-1 lg:grid-cols-2 gap-3.5'
         : 'bg-card rounded-card border border-line px-4';
 
-  const renderItems = (list: MenuItem[]) => (
+  const renderItems = (list: MenuItem[], prioritizeFirstRow = false) => (
     <div className={gridCls}>
-      {list.map((item) => (
-        <MenuItemCard key={item.id} item={item} theme={theme} layout={layout} canAdd={canAdd} onOpen={setSelected} onQuickAdd={quickAdd} />
+      {list.map((item, idx) => (
+        <MenuItemCard
+          key={item.id}
+          item={item}
+          theme={theme}
+          layout={layout}
+          canAdd={canAdd}
+          priority={prioritizeFirstRow && idx < 4}
+          onOpen={setSelected}
+          onQuickAdd={quickAdd}
+        />
       ))}
     </div>
   );
@@ -725,9 +734,9 @@ export const Home: React.FC = () => {
                 </button>
               </div>
               <div className="flex gap-3.5 overflow-x-auto hide-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 snap-x">
-                {featured.map((item) => (
+                {featured.map((item, idx) => (
                   <div key={item.id} className="w-[150px] sm:w-[195px] shrink-0 snap-start">
-                    <MenuItemCard item={item} theme={theme} layout="grid" canAdd={canAdd} onOpen={setSelected} onQuickAdd={quickAdd} />
+                    <MenuItemCard item={item} theme={theme} layout="grid" canAdd={canAdd} priority={idx < 4} onOpen={setSelected} onQuickAdd={quickAdd} />
                   </div>
                 ))}
               </div>
@@ -778,13 +787,13 @@ export const Home: React.FC = () => {
             </div>
           )}
 
-          {sections.map(({ category, items: list }) => (
+          {sections.map(({ category, items: list }, sectionIdx) => (
             <section key={category.id} id={`category-${category.id}`} className="cv-section scroll-mt-32 sm:scroll-mt-36 space-y-3">
               <div>
                 <h3 className="font-display text-base sm:text-xl font-extrabold text-ink">{category.name}</h3>
                 {category.description && <p className="text-xs sm:text-sm text-muted">{category.description}</p>}
               </div>
-              {renderItems(list)}
+              {renderItems(list, sectionIdx === 0)}
             </section>
           ))}
 

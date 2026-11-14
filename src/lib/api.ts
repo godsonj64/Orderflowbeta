@@ -65,7 +65,7 @@ export const apiPost = <T>(path: string, body: unknown = {}) => request<T>('POST
 // ---------------------------------------------------------------------------
 
 import type { OrderTotals, ModifierSelection, TipChoice } from './pricing';
-import type { GeoPoint, OrderStatus, OrderType, PaymentMethod, PaymentStatus, RestaurantProfile } from '../types';
+import type { GeoPoint, MenuCategory, MenuItem, OrderStatus, OrderType, PaymentMethod, PaymentStatus, RestaurantProfile } from '../types';
 
 export interface CheckoutRequest {
   items: { itemId: string; quantity: number; selections: ModifierSelection[]; notes?: string }[];
@@ -99,6 +99,14 @@ export interface CheckoutResponse {
 /** "server": orders are priced and created by the server. "direct": basic mode (cash only, see SETUP.md). */
 export type OrderingMode = 'server' | 'direct';
 
+export interface StoreConfigResponse {
+  cardPayments: boolean;
+  ordering?: OrderingMode;
+  profile?: RestaurantProfile | null;
+  categories?: MenuCategory[];
+  items?: MenuItem[];
+}
+
 export interface PaymentStateResponse {
   paid: boolean;
   status: OrderStatus;
@@ -107,8 +115,24 @@ export interface PaymentStateResponse {
   processing?: boolean;
 }
 
+declare global {
+  interface Window {
+    __INITIAL_CONFIG__?: Promise<StoreConfigResponse | null> | null;
+  }
+}
+
 export const api = {
-  config: () => apiGet<{ cardPayments: boolean; ordering?: OrderingMode; profile?: RestaurantProfile | null }>('/api/config'),
+  config: async (): Promise<StoreConfigResponse> => {
+    if (typeof window !== 'undefined' && window.__INITIAL_CONFIG__) {
+      const pending = window.__INITIAL_CONFIG__;
+      window.__INITIAL_CONFIG__ = null;
+      const preloaded = await pending.catch(() => null);
+      if (preloaded && typeof preloaded === 'object') {
+        return preloaded;
+      }
+    }
+    return apiGet<StoreConfigResponse>('/api/config');
+  },
   health: () =>
     apiGet<{ status: string; firestore: 'ok' | 'error'; ordering?: OrderingMode; cardPayments: boolean; webhooks: boolean }>('/api/health'),
   checkout: (body: CheckoutRequest) => apiPost<CheckoutResponse>('/api/checkout', body),
