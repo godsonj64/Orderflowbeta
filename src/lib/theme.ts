@@ -41,8 +41,8 @@ const SANS_FALLBACK = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFo
 const SERIF_FALLBACK = 'ui-serif, Georgia, Cambria, "Times New Roman", serif';
 
 export const FONT_PAIRINGS: FontPairing[] = [
-  { id: 'geist', name: 'Minimalist (Geist)', display: `"Geist", ${SANS_FALLBACK}`, body: `"Geist", ${SANS_FALLBACK}`, google: ['Geist:wght@300;400;500;600;700;800'] },
-  { id: 'inter', name: 'Modern (Inter)', display: `"Inter", ${SANS_FALLBACK}`, body: `"Inter", ${SANS_FALLBACK}`, google: [] },
+  { id: 'geist', name: 'Minimalist (Geist)', display: `"Geist", "Inter", ${SANS_FALLBACK}`, body: `"Inter", "Geist", ${SANS_FALLBACK}`, google: ['Geist:wght@300;400;500;600;700;800'] },
+  { id: 'inter', name: 'Modern (Inter)', display: `"Inter", ${SANS_FALLBACK}`, body: `"Inter", ${SANS_FALLBACK}`, google: ['Inter:wght@400;500;600;700;800'] },
   { id: 'poppins', name: 'Friendly (Poppins)', display: `"Poppins", ${SANS_FALLBACK}`, body: `"Poppins", ${SANS_FALLBACK}`, google: ['Poppins:wght@400;500;600;700;800'] },
   { id: 'dm', name: 'Refined (DM Serif + DM Sans)', display: `"DM Serif Display", ${SERIF_FALLBACK}`, body: `"DM Sans", ${SANS_FALLBACK}`, google: ['DM+Serif+Display', 'DM+Sans:wght@400;500;600;700'] },
   { id: 'playfair', name: 'Elegant (Playfair Display)', display: `"Playfair Display", ${SERIF_FALLBACK}`, body: `"Inter", ${SANS_FALLBACK}`, google: ['Playfair+Display:wght@600;700;800'] },
@@ -185,6 +185,7 @@ export function themeStyle(theme: ResolvedTheme): CSSProperties {
     '--radius-chip': r.chip,
     '--font-sans': font.body,
     '--font-display': font.display,
+    '--font-mono': `"Inter", "Geist", ${SANS_FALLBACK}`,
     colorScheme: theme.mode === 'dark' ? 'dark' : 'light',
   } as CSSProperties;
 }
@@ -214,6 +215,7 @@ export function brandThemeStyle(theme: ResolvedTheme): CSSProperties {
     '--radius-chip': r.chip,
     '--font-sans': font.body,
     '--font-display': font.display,
+    '--font-mono': `"Inter", "Geist", ${SANS_FALLBACK}`,
     colorScheme: 'light',
   } as CSSProperties;
 }

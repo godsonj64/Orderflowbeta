@@ -2,27 +2,31 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
-import { ChevronRight, RotateCcw, ShoppingBag } from 'lucide-react';
+import { ChevronRight, Download, FileText, RotateCcw, ShoppingBag } from 'lucide-react';
 import { db } from '../firebase';
 import type { Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useStore } from '../context/StoreContext';
 import { useStorefrontUI } from '../components/Layout';
+import { ReceiptModal } from '../components/ReceiptModal';
 import { PageSpinner } from '../components/ui';
+import { receiptFilename } from '../lib/analytics';
 import { formatMoney } from '../lib/money';
 import { orderCode } from '../lib/ids';
 import { formatDateTime, toMillis } from '../lib/dates';
 import { customerStatusLabel, isActive, isCashDue } from '../lib/orderStatus';
+import { downloadOrderReceiptPdf } from '../lib/pdf';
 import { reportError } from '../utils/errorHandling';
 
 export const MyOrders: React.FC = () => {
   const { userProfile, loading: authLoading } = useAuth();
-  const { catalog } = useStore();
+  const { profile, catalog } = useStore();
   const { addToCart } = useCart();
   const { openAuth } = useStorefrontUI();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -101,13 +105,32 @@ export const MyOrders: React.FC = () => {
         <p className="text-sm text-muted mt-2 line-clamp-1">{order.items.map((i) => `${i.quantity}× ${i.name}`).join(', ')}</p>
         {order.scheduledTime && <p className="text-xs font-semibold text-brand mt-1">Scheduled: {order.scheduledTime}</p>}
       </Link>
-      <div className="flex border-t border-line text-sm font-semibold">
-        <Link to={`/order/${order.id}`} className="flex-1 py-2.5 flex items-center justify-center gap-1 text-muted">
-          Details <ChevronRight size={16} />
+      <div className="flex border-t border-line text-xs sm:text-sm font-semibold">
+        <Link to={`/order/${order.id}`} className="flex-1 py-2.5 flex items-center justify-center gap-1 text-muted hover:text-ink transition">
+          Details <ChevronRight size={15} />
         </Link>
+        <button
+          type="button"
+          onClick={() => setReceiptOrder(order)}
+          className="flex-1 py-2.5 flex items-center justify-center gap-1.5 text-ink border-l border-line hover:bg-soft/60 transition"
+        >
+          <FileText size={14} className="text-brand" /> Receipt
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            downloadOrderReceiptPdf(order, profile, 'customer');
+            toast.success(`Downloaded ${receiptFilename(order, 'customer')}`);
+          }}
+          className="px-3.5 py-2.5 flex items-center justify-center gap-1 text-brand border-l border-line hover:bg-soft/60 transition"
+          title="Download Receipt PDF"
+          aria-label={`Download PDF receipt for order ${orderCode(order)}`}
+        >
+          <Download size={14} /> <span className="hidden xs:inline">PDF</span>
+        </button>
         {!isActive(order) && (
-          <button onClick={() => reorder(order)} className="flex-1 py-2.5 flex items-center justify-center gap-1.5 text-brand border-l border-line">
-            <RotateCcw size={15} /> Order again
+          <button onClick={() => reorder(order)} className="flex-1 py-2.5 flex items-center justify-center gap-1.5 text-brand border-l border-line hover:bg-soft/60 transition">
+            <RotateCcw size={14} /> Order again
           </button>
         )}
       </div>
@@ -151,6 +174,14 @@ export const MyOrders: React.FC = () => {
           )}
         </>
       )}
+
+      <ReceiptModal
+        order={receiptOrder}
+        profile={profile}
+        onClose={() => setReceiptOrder(null)}
+        defaultVariant="customer"
+        surface="store"
+      />
     </div>
   );
 };

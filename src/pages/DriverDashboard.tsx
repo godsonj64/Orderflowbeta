@@ -1,21 +1,24 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, limit, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
-import { Camera, CheckCircle2, LocateFixed, MapPin, Navigation, Package, Phone, Radio } from 'lucide-react';
+import { Camera, CheckCircle2, Download, FileText, LocateFixed, MapPin, Navigation, Package, Phone, Radio } from 'lucide-react';
 import { db } from '../firebase';
 import type { GeoPoint, Order } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
+import { receiptFilename } from '../lib/analytics';
 import { orderCode } from '../lib/ids';
 import { formatMoney } from '../lib/money';
-import { timeAgo, toMillis } from '../lib/dates';
+import { formatDateTime, timeAgo, toMillis } from '../lib/dates';
 import { isCashDue } from '../lib/orderStatus';
 import { geocodeAddressNominatim, haversineDistanceKm, isValidGeoPoint, sanitizeGeoPoint, shouldPublishGpsUpdate } from '../lib/geo';
+import { downloadOrderReceiptPdf } from '../lib/pdf';
 import { resizeWithPreset } from '../utils/imageUpload';
 import { saveProofPhoto } from '../lib/proof';
 import { ordersFromSnapshot } from '../lib/orderList';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { friendlyError, reportError } from '../utils/errorHandling';
+import { ReceiptModal } from '../components/ReceiptModal';
 import { Sheet, Spinner } from '../components/ui';
 
 const OrderTrackingMap = lazy(() =>
@@ -39,10 +42,12 @@ export const DriverDashboard: React.FC = () => {
   const { profile } = useStore();
   const [available, setAvailable] = useState<Order[]>([]);
   const [mine, setMine] = useState<Order[]>([]);
+  const [completedMine, setCompletedMine] = useState<Order[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [completing, setCompleting] = useState<Order | null>(null);
   const [cashConfirmed, setCashConfirmed] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
 
   // Live GPS broadcasting state
   const [sharingGps, setSharingGps] = useState(false);
@@ -81,20 +86,27 @@ export const DriverDashboard: React.FC = () => {
     // hide the delivery they are on right now.)
     const mineBase = [where('type', '==', 'delivery'), where('driverId', '==', userProfile.uid)];
     const mineCache = new Map<string, Order>();
-    const showMine = (snap: Parameters<typeof ordersFromSnapshot>[0]) =>
+    const showMine = (snap: Parameters<typeof ordersFromSnapshot>[0]) => {
+      const allMine = ordersFromSnapshot(snap, mineCache);
       setMine(
-        ordersFromSnapshot(snap, mineCache)
+        allMine
           .filter((o) => ACTIVE_DELIVERY_STATUSES.includes(o.status))
           .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt)),
       );
+      setCompletedMine(
+        allMine
+          .filter((o) => o.status === 'completed')
+          .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
+          .slice(0, 20),
+      );
+    };
     let unsubMine = onSnapshot(
-      query(collection(db, 'orders'), ...mineBase, where('status', 'in', ACTIVE_DELIVERY_STATUSES), limit(50)),
+      query(collection(db, 'orders'), ...mineBase, limit(100)),
       showMine,
       (err) => {
         if ((err as { code?: string })?.code !== 'failed-precondition') return reportError(err, 'driver-mine');
-        // The database asked for an index for the precise query: use the broad one instead.
         mineCache.clear();
-        unsubMine = onSnapshot(query(collection(db, 'orders'), ...mineBase, limit(300)), showMine, (e) => reportError(e, 'driver-mine'));
+        unsubMine = onSnapshot(query(collection(db, 'orders'), ...mineBase, limit(100)), showMine, (e) => reportError(e, 'driver-mine'));
       },
     );
     return () => {
@@ -442,7 +454,7 @@ export const DriverDashboard: React.FC = () => {
                   </Suspense>
                 )}
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <a
                     href={navigationUrl(destPoint, order.deliveryAddress)}
                     target="_blank"
@@ -459,8 +471,24 @@ export const DriverDashboard: React.FC = () => {
                       <Phone size={17} /> Call
                     </a>
                   ) : (
-                    <span />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        downloadOrderReceiptPdf(order, profile, 'driver');
+                        toast.success(`Downloaded ${receiptFilename(order, 'driver')}`);
+                      }}
+                      className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-xs font-semibold transition"
+                    >
+                      <Download size={17} /> Slip PDF
+                    </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setReceiptOrder(order)}
+                    className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-xs font-semibold transition"
+                  >
+                    <FileText size={17} /> Receipt / Slip
+                  </button>
                   {pickedUp_ ? (
                     <button
                       onClick={() => openComplete(order)}
@@ -518,18 +546,76 @@ export const DriverDashboard: React.FC = () => {
                     Cash order · collect {formatMoney(order.total)}
                   </p>
                 )}
-                <button
-                  onClick={() => accept(order)}
-                  disabled={busyId === order.id}
-                  className="mt-auto w-full min-h-[44px] bg-brand hover:opacity-95 text-on-brand rounded-btn py-2.5 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition"
-                >
-                  {busyId === order.id && <Spinner size={16} />} Accept delivery
-                </button>
+                <div className="mt-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReceiptOrder(order)}
+                    className="min-h-[44px] px-3 rounded-btn bg-soft hover:bg-gray-200/70 text-ink text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition"
+                    title="View Delivery Slip / Receipt"
+                  >
+                    <FileText size={15} className="text-brand" /> Slip
+                  </button>
+                  <button
+                    onClick={() => accept(order)}
+                    disabled={busyId === order.id}
+                    className="flex-1 min-h-[44px] bg-brand hover:opacity-95 text-on-brand rounded-btn py-2.5 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition"
+                  >
+                    {busyId === order.id && <Spinner size={16} />} Accept delivery
+                  </button>
+                </div>
               </article>
             ))}
           </div>
         )}
       </section>
+
+      {/* Recent completed deliveries with Delivery Slip & Receipt PDF downloads */}
+      {completedMine.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="font-bold text-sm uppercase tracking-wider text-muted">
+            Completed deliveries & receipts ({completedMine.length})
+          </h2>
+          <div className="bg-white rounded-card border border-line shadow-ios-sm divide-y divide-line">
+            {completedMine.slice(0, 10).map((order) => (
+              <div key={order.id} className="p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-extrabold text-sm text-ink">#{orderCode(order)}</span>
+                    <span className="text-xs font-semibold text-ink truncate">{order.customerName || 'Customer'}</span>
+                    {!!order.deliveryTip && order.deliveryTip > 0 && (
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-mono font-bold">
+                        Tip {formatMoney(order.deliveryTip)}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted truncate mt-0.5">
+                    {formatDateTime(order.createdAt)} · {order.deliveryAddress}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setReceiptOrder(order)}
+                    className="min-h-[34px] px-3 py-1.5 rounded-btn bg-soft hover:bg-gray-200/70 text-ink text-xs font-semibold inline-flex items-center gap-1 transition"
+                  >
+                    <FileText size={13} className="text-brand" /> View slip
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      downloadOrderReceiptPdf(order, profile, 'driver');
+                      toast.success(`Downloaded ${receiptFilename(order, 'driver')}`);
+                    }}
+                    className="min-h-[34px] px-3 py-1.5 rounded-btn bg-brand/10 hover:bg-brand/20 text-brand text-xs font-bold inline-flex items-center gap-1 transition"
+                  >
+                    <Download size={13} /> PDF
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <Sheet
         open={!!completing}
@@ -567,6 +653,15 @@ export const DriverDashboard: React.FC = () => {
           </div>
         )}
       </Sheet>
+
+      <ReceiptModal
+        order={receiptOrder}
+        profile={profile}
+        onClose={() => setReceiptOrder(null)}
+        defaultVariant="driver"
+        allowVariantSwitch
+        surface="admin"
+      />
     </div>
   );
 };

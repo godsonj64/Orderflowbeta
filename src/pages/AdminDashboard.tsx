@@ -1,19 +1,23 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Timestamp, collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
-import { MapPin, Phone, Search } from 'lucide-react';
+import { Download, FileText, MapPin, Phone, Search } from 'lucide-react';
 import { db } from '../firebase';
 import type { Order } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { useStore } from '../context/StoreContext';
 import { useOrderActions } from '../hooks/useOrderActions';
 import { StoreControls } from '../components/StoreControls';
+import { ReceiptModal } from '../components/ReceiptModal';
 import { ConfirmDialog, PageSpinner, Sheet, Spinner, adminInput } from '../components/ui';
 import { ApiError, api, isNoDatabaseError } from '../lib/api';
+import { receiptFilename } from '../lib/analytics';
 import { ordersFromSnapshot } from '../lib/orderList';
 import { formatMoney, fromCents, toCents } from '../lib/money';
 import { orderCode } from '../lib/ids';
 import { formatDateTime, timeAgo, toMillis } from '../lib/dates';
 import { ACTIVE_STATUSES, STATUS_LABEL, STATUS_STYLE, isCashDue, nextStep, paymentSummary } from '../lib/orderStatus';
+import { downloadOrderReceiptPdf } from '../lib/pdf';
 import { friendlyError, reportError } from '../utils/errorHandling';
 
 const AdminFinancials = lazy(() => import('../components/AdminFinancials').then((m) => ({ default: m.AdminFinancials })));
@@ -42,6 +46,8 @@ interface CardProps {
   onCancel: (order: Order) => void;
   onRefund: (order: Order) => void;
   onCheckPayment: (order: Order) => void;
+  onOpenReceipt: (order: Order) => void;
+  onDownloadPdf: (order: Order) => void;
 }
 
 const OrderCard = React.memo<CardProps>(function OrderCard({
@@ -53,6 +59,8 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
   onCancel,
   onRefund,
   onCheckPayment,
+  onOpenReceipt,
+  onDownloadPdf,
 }) {
   const step = nextStep(order);
   const pay = paymentSummary(order);
@@ -172,6 +180,21 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
         )}
 
         <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onOpenReceipt(order)}
+            className="min-h-[34px] bg-soft hover:bg-gray-200/70 text-ink rounded-btn px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition whitespace-nowrap"
+          >
+            <FileText size={13} className="text-brand" /> Receipt
+          </button>
+          <button
+            type="button"
+            onClick={() => onDownloadPdf(order)}
+            className="min-h-[34px] bg-soft hover:bg-gray-200/70 text-brand rounded-btn px-2.5 py-1.5 text-xs font-bold inline-flex items-center gap-1 transition whitespace-nowrap"
+            title="Download PDF Receipt"
+          >
+            <Download size={13} /> PDF
+          </button>
           {cashDue && step?.status !== 'completed' && (
             <button
               onClick={() => onCollectCash(order)}
@@ -221,6 +244,7 @@ const OrderCard = React.memo<CardProps>(function OrderCard({
 
 export const AdminDashboard: React.FC = () => {
   const { isManager } = useAuth();
+  const { profile } = useStore();
   const actions = useOrderActions();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,6 +258,7 @@ export const AdminDashboard: React.FC = () => {
   const [cancelReason, setCancelReason] = useState('');
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundAmount, setRefundAmount] = useState('');
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [working, setWorking] = useState(false);
 
   useEffect(() => {
@@ -329,6 +354,18 @@ export const AdminDashboard: React.FC = () => {
     setRefundOrder(o);
     setRefundAmount(fromCents(toCents(o.total) - toCents(o.refundAmount || 0)).toFixed(2));
   }, []);
+
+  const handleOpenReceipt = useCallback((o: Order) => {
+    setReceiptOrder(o);
+  }, []);
+
+  const handleDownloadPdf = useCallback(
+    (o: Order) => {
+      downloadOrderReceiptPdf(o, profile, 'customer');
+      toast.success(`Downloaded ${receiptFilename(o, 'customer')}`);
+    },
+    [profile],
+  );
 
   const confirmCash = async () => {
     if (!cashOrder) return;
@@ -525,6 +562,8 @@ export const AdminDashboard: React.FC = () => {
                     onCancel={handleOpenCancel}
                     onRefund={handleOpenRefund}
                     onCheckPayment={checkPayment}
+                    onOpenReceipt={handleOpenReceipt}
+                    onDownloadPdf={handleDownloadPdf}
                   />
                 ))}
               </div>
@@ -619,6 +658,15 @@ export const AdminDashboard: React.FC = () => {
           <p className="text-xs">A full refund of an unfinished order also cancels it.</p>
         </div>
       </Sheet>
+
+      <ReceiptModal
+        order={receiptOrder}
+        profile={profile}
+        onClose={() => setReceiptOrder(null)}
+        defaultVariant="customer"
+        allowVariantSwitch
+        surface="admin"
+      />
     </div>
   );
 };

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, doc, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
-import { Maximize, Sun } from 'lucide-react';
+import { FileText, Maximize, Sun } from 'lucide-react';
 import { db } from '../firebase';
 import type { Order, OrderStatus } from '../types';
 import { useStore } from '../context/StoreContext';
@@ -9,6 +9,7 @@ import { useOrderActions } from '../hooks/useOrderActions';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { ordersFromSnapshot } from '../lib/orderList';
 import { StoreControls } from '../components/StoreControls';
+import { ReceiptModal } from '../components/ReceiptModal';
 import { ConfirmDialog, Sheet, Toggle } from '../components/ui';
 import { orderCode } from '../lib/ids';
 import { formatMoney } from '../lib/money';
@@ -38,12 +39,14 @@ const Ticket = React.memo(function Ticket({
   prep,
   timeZone,
   onAction,
+  onOpenReceipt,
 }: {
   order: Order;
   now: number;
   prep: number;
   timeZone?: string;
   onAction: (order: Order) => void;
+  onOpenReceipt: (order: Order) => void;
 }) {
   const step = nextStep(order);
   const cashDue = isCashDue(order);
@@ -90,9 +93,20 @@ const Ticket = React.memo(function Ticket({
             )}
           </p>
         </div>
-        <span className={`shrink-0 px-2 py-1 rounded-lg text-xs font-bold font-mono tabular-nums ${timerCls}`}>
-          {timerText}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => onOpenReceipt(order)}
+            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[#FAF6F0] transition"
+            title="Ticket / Receipt PDF"
+            aria-label={`Ticket and receipt PDF for order ${orderCode(order)}`}
+          >
+            <FileText size={13} />
+          </button>
+          <span className={`px-2 py-1 rounded-lg text-xs font-bold font-mono tabular-nums ${timerCls}`}>
+            {timerText}
+          </span>
+        </div>
       </header>
 
       <ul className="p-3.5 space-y-2.5 flex-1">
@@ -177,6 +191,7 @@ export const KitchenDashboard: React.FC = () => {
   const [tab, setTab] = useState<OrderStatus>('new');
   const [stockOpen, setStockOpen] = useState(false);
   const [cashOrder, setCashOrder] = useState<Order | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const wake = useKeepAwake();
   const prep = prepMinutes(profile);
 
@@ -320,7 +335,17 @@ export const KitchenDashboard: React.FC = () => {
                 {list.length === 0 ? (
                   <p className="text-center text-xs text-[#6B7D6B] border border-dashed border-white/10 rounded-xl py-8">No tickets in {col.title.toLowerCase()}</p>
                 ) : (
-                  list.map((o) => <Ticket key={o.id} order={o} now={now} prep={prep} timeZone={status.timeZone} onAction={onAction} />)
+                  list.map((o) => (
+                    <Ticket
+                      key={o.id}
+                      order={o}
+                      now={now}
+                      prep={prep}
+                      timeZone={status.timeZone}
+                      onAction={onAction}
+                      onOpenReceipt={setReceiptOrder}
+                    />
+                  ))
                 )}
               </div>
             </section>
@@ -364,6 +389,15 @@ export const KitchenDashboard: React.FC = () => {
           if (cashOrder) await actions.markCashPaid(cashOrder, true);
           setCashOrder(null);
         }}
+      />
+
+      <ReceiptModal
+        order={receiptOrder}
+        profile={profile}
+        onClose={() => setReceiptOrder(null)}
+        defaultVariant="kitchen"
+        allowVariantSwitch
+        surface="admin"
       />
     </div>
   );

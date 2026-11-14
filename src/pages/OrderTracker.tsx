@@ -9,6 +9,8 @@ import {
   ChefHat,
   Clock,
   CreditCard,
+  Download,
+  FileText,
   LocateFixed,
   MapPin,
   Navigation,
@@ -35,6 +37,9 @@ import { geocodeAddressNominatim, isValidGeoPoint, sanitizeGeoPoint } from '../l
 import { watchProofPhoto } from '../lib/proof';
 import { friendlyError } from '../utils/errorHandling';
 import { ConfirmDialog, PageSpinner, Spinner } from '../components/ui';
+import { ReceiptModal } from '../components/ReceiptModal';
+import { downloadOrderReceiptPdf } from '../lib/pdf';
+import { receiptFilename } from '../lib/analytics';
 import { useStorefrontUI } from '../components/Layout';
 
 const OrderTrackingMap = lazy(() =>
@@ -65,6 +70,7 @@ export const OrderTracker: React.FC = () => {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
   const [submittingRating, setSubmittingRating] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
 
   // Real-time GPS & OpenStreetMap state
   const [geocodedStore, setGeocodedStore] = useState<GeoPoint | null>(null);
@@ -428,6 +434,27 @@ export const OrderTracker: React.FC = () => {
         )}
 
         <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {!pendingPayment && (
+            <>
+              <button
+                type="button"
+                onClick={() => setReceiptOpen(true)}
+                className="min-h-[44px] px-4 py-2.5 rounded-btn bg-soft hover:opacity-90 text-ink text-sm font-semibold flex items-center gap-2 transition"
+              >
+                <FileText size={16} className="text-brand" /> View receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  downloadOrderReceiptPdf(order, profile, 'customer');
+                  toast.success(`Downloaded ${receiptFilename(order, 'customer')}`);
+                }}
+                className="min-h-[44px] px-4 py-2.5 rounded-btn bg-soft hover:opacity-90 text-ink text-sm font-semibold flex items-center gap-2 transition"
+              >
+                <Download size={16} className="text-brand" /> Download PDF
+              </button>
+            </>
+          )}
           {order.status === 'new' && (
             <button onClick={() => setCancelOpen(true)} className="min-h-[44px] px-4 py-2.5 rounded-btn bg-red-50 text-red-700 text-sm font-semibold">
               Cancel order
@@ -526,12 +553,26 @@ export const OrderTracker: React.FC = () => {
       )}
 
       <section className="bg-card rounded-card border border-line p-5 sm:p-7">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-bold">Payment</h2>
-          <span className="text-sm flex items-center gap-1.5 text-muted">
-            {order.paymentMethod === 'cash' ? <Banknote size={16} /> : <CreditCard size={16} />}
-            {order.paymentMethod === 'cash' ? 'Cash' : 'Card'}
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h2 className="font-bold">Payment & Receipt</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-sm flex items-center gap-1.5 text-muted">
+              {order.paymentMethod === 'cash' ? <Banknote size={16} /> : <CreditCard size={16} />}
+              {order.paymentMethod === 'cash' ? 'Cash' : 'Card'}
+            </span>
+            {!pendingPayment && (
+              <button
+                type="button"
+                onClick={() => {
+                  downloadOrderReceiptPdf(order, profile, 'customer');
+                  toast.success(`Downloaded ${receiptFilename(order, 'customer')}`);
+                }}
+                className="px-2.5 py-1 rounded-btn bg-soft hover:opacity-90 text-xs font-bold text-brand inline-flex items-center gap-1 transition"
+              >
+                <Download size={13} /> Receipt PDF
+              </button>
+            )}
+          </div>
         </div>
         {cashDue ? (
           <p className="rounded-control bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 text-sm font-semibold font-mono tabular-nums">
@@ -647,6 +688,14 @@ export const OrderTracker: React.FC = () => {
         cancelLabel="Keep order"
         onCancel={() => setCancelOpen(false)}
         onConfirm={handleCancel}
+      />
+
+      <ReceiptModal
+        order={receiptOpen ? order : null}
+        profile={profile}
+        onClose={() => setReceiptOpen(false)}
+        defaultVariant="customer"
+        surface="store"
       />
     </div>
   );
