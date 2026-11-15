@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, getDocs, getDocsFromCache, onSnapshot, query, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { ChevronRight, Download, FileText, RotateCcw, ShoppingBag } from 'lucide-react';
 import { db } from '../firebase';
@@ -20,7 +20,8 @@ import { downloadOrderReceiptPdf } from '../lib/pdf';
 import { reportError } from '../utils/errorHandling';
 
 export const MyOrders: React.FC = () => {
-  const { userProfile, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
+  const uid = user?.uid || userProfile?.uid || null;
   const { profile, catalog } = useStore();
   const { addToCart } = useCart();
   const { openAuth } = useStorefrontUI();
@@ -29,25 +30,74 @@ export const MyOrders: React.FC = () => {
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!userProfile) {
-      setLoading(false);
+    if (!uid) {
+      if (!authLoading) {
+        setOrders([]);
+        setLoading(false);
+      }
       return;
     }
+
+    let cancelled = false;
+    setLoading(true);
     // Equality-only query: works without a composite index. Sorted on the client.
-    const unsub = onSnapshot(
-      query(collection(db, 'orders'), where('customerId', '==', userProfile.uid)),
-      (snapshot) => {
-        setOrders(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Order));
+    const q = query(collection(db, 'orders'), where('customerId', '==', uid));
+
+    // 1. Instant local cache read so existing orders render in <20ms even if the
+    //    Firestore multi-tab WebChannel stream is reconnecting.
+    getDocsFromCache(q)
+      .then((cacheSnap) => {
+        if (cancelled) return;
+        if (!cacheSnap.empty) {
+          setOrders(cacheSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Order));
+          setLoading(false);
+        }
+      })
+      .catch(() => undefined);
+
+    // 2. One-shot getDocs fallback in case onSnapshot waits on multi-tab primary lease.
+    getDocs(q)
+      .then((snap) => {
+        if (cancelled) return;
+        setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Order));
         setLoading(false);
+      })
+      .catch(() => undefined);
+
+    // 3. Hard safety timeout so the page never stays stuck on "Loading your orders…"
+    //    even on offline/flaky mobile connections with an empty cache.
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 1800);
+
+    // 4. Live listener with includeMetadataChanges so cached snapshots emit immediately
+    //    and real-time kitchen status updates stream in live.
+    const unsub = onSnapshot(
+      q,
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        if (cancelled) return;
+        const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Order);
+        setOrders(docs);
+        if (docs.length > 0 || !snapshot.metadata.fromCache) {
+          window.clearTimeout(safetyTimer);
+          setLoading(false);
+        }
       },
       (error) => {
+        if (cancelled) return;
+        window.clearTimeout(safetyTimer);
         reportError(error, 'my-orders');
         setLoading(false);
       },
     );
-    return () => unsub();
-  }, [userProfile?.uid, authLoading]);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safetyTimer);
+      unsub();
+    };
+  }, [uid, authLoading]);
 
   const visible = useMemo(
     () =>
@@ -72,9 +122,9 @@ export const MyOrders: React.FC = () => {
     else toast.error('These items are no longer available.');
   };
 
-  if (authLoading || loading) return <PageSpinner label="Loading your orders…" />;
+  if ((authLoading && !uid) || loading) return <PageSpinner label="Loading your orders…" />;
 
-  if (!userProfile) {
+  if (!uid) {
     return (
       <div className="text-center py-20 max-w-sm mx-auto">
         <ShoppingBag className="mx-auto text-muted mb-4" size={40} />

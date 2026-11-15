@@ -104,7 +104,7 @@ const admin = (element: React.ReactNode, roles: UserRole[] = STAFF_ROLES) => (
 );
 
 export default function App() {
-  // Warm the Cart chunk during browser idle time so opening the cart feels instantaneous.
+  // Warm the Cart, MyOrders, and OrderTracker chunks during browser idle time so opening them feels instantaneous.
   useEffect(() => {
     const win = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
@@ -112,6 +112,8 @@ export default function App() {
     };
     const preload = () => {
       void import('./pages/Cart').catch(() => undefined);
+      void import('./pages/MyOrders').catch(() => undefined);
+      void import('./pages/OrderTracker').catch(() => undefined);
     };
     if (typeof win.requestIdleCallback === 'function') {
       const id = win.requestIdleCallback(preload, { timeout: 2500 });

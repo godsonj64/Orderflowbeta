@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocFromCache, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import {
   Banknote,
@@ -85,19 +85,61 @@ export const OrderTracker: React.FC = () => {
   const paymentChecked = useRef(false);
 
   useEffect(() => {
-    if (!orderId || authLoading) return;
-    if (!user) {
+    if (!orderId) {
       setState('missing');
       return;
     }
+    if (!user) {
+      if (!authLoading) setState('missing');
+      return;
+    }
+
+    let cancelled = false;
+    setState((prev) => (prev === 'ready' ? 'ready' : 'loading'));
+    const ref = doc(db, 'orders', orderId);
+
+    getDocFromCache(ref)
+      .then((cacheSnap) => {
+        if (cancelled || !cacheSnap.exists()) return;
+        const next = { id: cacheSnap.id, ...cacheSnap.data() } as Order;
+        prevStatus.current = next.status;
+        setOrder(next);
+        setState('ready');
+      })
+      .catch(() => undefined);
+
+    getDoc(ref)
+      .then((snap) => {
+        if (cancelled) return;
+        if (!snap.exists()) return;
+        const next = { id: snap.id, ...snap.data() } as Order;
+        prevStatus.current = next.status;
+        setOrder(next);
+        setState('ready');
+      })
+      .catch(() => undefined);
+
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setState((prev) => (prev === 'loading' ? 'missing' : prev));
+      }
+    }, 3000);
+
     const unsub = onSnapshot(
-      doc(db, 'orders', orderId),
+      ref,
+      { includeMetadataChanges: true },
       (snap) => {
+        if (cancelled) return;
+        const fromCache = snap.metadata.fromCache;
         if (!snap.exists()) {
-          setOrder(null);
-          setState('missing');
+          if (!fromCache) {
+            window.clearTimeout(safetyTimer);
+            setOrder(null);
+            setState('missing');
+          }
           return;
         }
+        window.clearTimeout(safetyTimer);
         const next = { id: snap.id, ...snap.data() } as Order;
         if (prevStatus.current && prevStatus.current !== next.status && STATUS_TOASTS[next.status]) {
           toast(STATUS_TOASTS[next.status], { duration: 6000 });
@@ -107,9 +149,17 @@ export const OrderTracker: React.FC = () => {
         setOrder(next);
         setState('ready');
       },
-      () => setState('missing'),
+      () => {
+        if (cancelled) return;
+        window.clearTimeout(safetyTimer);
+        setState('missing');
+      },
     );
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safetyTimer);
+      unsub();
+    };
   }, [orderId, user, authLoading]);
 
   // The driver's position arrives through the live order document above (no polling).
@@ -226,7 +276,7 @@ export const OrderTracker: React.FC = () => {
     );
   };
 
-  if (state === 'loading' || authLoading) return <PageSpinner label="Loading your order…" />;
+  if (state === 'loading' || (authLoading && !user)) return <PageSpinner label="Loading your order…" />;
 
   if (state === 'missing' || !order) {
     return (

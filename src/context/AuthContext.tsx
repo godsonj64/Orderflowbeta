@@ -85,7 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     getRedirectResult(auth).catch((err) => reportError(err, 'auth-redirect', { message: authErrorMessage(err) }));
 
     let unsubProfile: (() => void) | null = null;
+    // Safety net: never allow initial auth state resolution to block the UI indefinitely.
+    const authTimeout = window.setTimeout(() => {
+      setLoading(false);
+    }, 3000);
+
     const unsubAuth = onAuthStateChanged(auth, (currentUser) => {
+      window.clearTimeout(authTimeout);
       unsubProfile?.();
       unsubProfile = null;
       setUser(currentUser);
@@ -96,6 +102,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      const emailLower = (currentUser.email || '').toLowerCase();
+      const isBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has(emailLower);
+      const fallbackProfile: UserProfile = {
+        uid: currentUser.uid,
+        email: currentUser.email || '',
+        role: isBootstrapAdmin ? 'admin' : 'customer',
+        name: (currentUser.displayName || pendingName.current || '').slice(0, 100),
+        totalOrders: 0,
+        totalSpent: 0,
+      };
+
+      // Immediately unblock consumers (MyOrders, Cart, RequireRole) with an optimistic profile
+      // while the live Firestore listener syncs the persisted profile in the background.
+      setUserProfile((prev) => (prev && prev.uid === currentUser.uid ? prev : fallbackProfile));
+      setLoading(false);
+
       const ref = doc(db, 'users', currentUser.uid);
       unsubProfile = onSnapshot(
         ref,
@@ -103,22 +125,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const fromCache = snap.metadata.fromCache;
           if (snap.exists()) {
             const data = snap.data() as UserProfile;
-            const emailLower = (currentUser.email || data.email || '').toLowerCase();
-            const isBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has(emailLower);
-            if (isBootstrapAdmin && data.role !== 'admin') {
+            const snapEmailLower = (currentUser.email || data.email || '').toLowerCase();
+            const snapIsBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has(snapEmailLower);
+            if (snapIsBootstrapAdmin && data.role !== 'admin') {
               updateDoc(ref, { role: 'admin' }).catch(() => undefined);
-              setUserProfile({ ...data, role: 'admin' });
+              setUserProfile({ ...data, uid: currentUser.uid, role: 'admin' });
               setLoading(false);
               return;
             }
-            setUserProfile(data);
+            setUserProfile({ ...data, uid: currentUser.uid });
             setLoading(false);
 
             // Check if an admin pre-authorized a team role for this user's email
             // (Once per sign-in: the profile changes with every order, the invite does not.)
-            if (emailLower && data.role === 'customer' && !fromCache && inviteCheckedFor.current !== currentUser.uid) {
+            if (snapEmailLower && data.role === 'customer' && !fromCache && inviteCheckedFor.current !== currentUser.uid) {
               inviteCheckedFor.current = currentUser.uid;
-              const inviteRef = doc(db, 'users', emailInviteDocId(emailLower));
+              const inviteRef = doc(db, 'users', emailInviteDocId(snapEmailLower));
               getDoc(inviteRef)
                 .then(async (inviteSnap) => {
                   if (!inviteSnap.exists()) return;
@@ -138,8 +160,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Only create the profile once we know (from the server) that it does not exist.
           if (fromCache || creatingFor.current === currentUser.uid) return;
           creatingFor.current = currentUser.uid;
-          const emailLower = (currentUser.email || '').toLowerCase();
-          const isBootstrapAdmin = BOOTSTRAP_ADMIN_EMAILS.has(emailLower);
 
           const bootstrapProfile = async () => {
             let assignedRole: UserRole = isBootstrapAdmin ? 'admin' : 'customer';
@@ -183,13 +203,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
         (err) => {
           reportError(err, 'load-profile', { toast: false });
-          setUserProfile(null);
+          setUserProfile((prev) => prev || fallbackProfile);
           setLoading(false);
         },
       );
     });
 
     return () => {
+      window.clearTimeout(authTimeout);
       unsubProfile?.();
       unsubAuth();
     };
