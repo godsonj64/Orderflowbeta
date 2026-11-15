@@ -60,6 +60,9 @@ function normalize(profile: RestaurantProfile | null): RestaurantProfile {
     isAcceptingOrders: true,
     isPickupEnabled: true,
     isDeliveryEnabled: true,
+    isCardPaymentEnabled: true,
+    isCashPaymentEnabled: true,
+    isTippingEnabled: true,
     ...(profile || {}),
     businessHours: normalizeHours(profile?.businessHours),
     timezone: isValidTimeZone(profile?.timezone) ? profile!.timezone : browserTimeZone(),
@@ -575,7 +578,7 @@ export const AdminSettings: React.FC = () => {
                 <Toggle
                   label="Accept cash"
                   description="Customers can choose to pay with cash at pickup or to the driver. The order shows as “Cash due” until staff or the driver taps “Mark paid (cash)”."
-                  checked={!!draft.isCashPaymentEnabled}
+                  checked={draft.isCashPaymentEnabled !== false}
                   onChange={(v) => update({ isCashPaymentEnabled: v })}
                 />
                 <p className="text-xs text-gray-500">

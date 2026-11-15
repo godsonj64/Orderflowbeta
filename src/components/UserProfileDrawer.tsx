@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import React, { useEffect, useMemo, useState } from 'react';
+import { collection, getDocs, getDocsFromCache, onSnapshot, query, where } from 'firebase/firestore';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Award, Gift, LayoutDashboard, LogOut, ShoppingBag, Truck } from 'lucide-react';
@@ -23,7 +23,7 @@ export const UserProfileDrawer: React.FC<UserProfileDrawerProps> = ({ isOpen, on
   const { logout, updateContactInfo, isStaff, role } = useAuth();
   const { setPromoCode } = useCart();
   const navigate = useNavigate();
-  const [promos, setPromos] = useState<PromoCode[]>([]);
+  const [rawPromos, setRawPromos] = useState<PromoCode[]>([]);
   const [loadingPromos, setLoadingPromos] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -37,32 +37,74 @@ export const UserProfileDrawer: React.FC<UserProfileDrawerProps> = ({ isOpen, on
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
-    setLoadingPromos(true);
-    // Single-field query (no composite index needed); everything else is filtered here.
-    getDocs(query(collection(db, 'promos'), where('active', '==', true)))
+    // Only show spinner if we don't already have promos loaded in memory.
+    setLoadingPromos((prev) => (rawPromos.length > 0 ? false : prev));
+    // Single-field query (no composite index needed); eligibility is computed via useMemo below.
+    const q = query(collection(db, 'promos'), where('active', '==', true));
+
+    getDocsFromCache(q)
+      .then((cacheSnap) => {
+        if (cancelled || cacheSnap.empty) return;
+        setRawPromos(cacheSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode));
+        setLoadingPromos(false);
+      })
+      .catch(() => undefined);
+
+    getDocs(q)
       .then((snapshot) => {
         if (cancelled) return;
-        const now = Date.now();
-        const mine = snapshot.docs
-          .map((d) => ({ id: d.id, ...d.data() }) as PromoCode)
-          .filter((p) => {
-            const expires = toDate(p.expiresAt);
-            if (expires && expires.getTime() < now) return false;
-            if (p.usageLimit && (p.usedCount || 0) >= p.usageLimit) return false;
-            if (p.usedBy?.includes(userProfile.uid)) return false;
-            if (p.assignedTo?.length) return p.assignedTo.includes(userProfile.uid);
-            if (p.minOrders && (userProfile.totalOrders || 0) < p.minOrders) return false;
-            if (p.minSpent && (userProfile.totalSpent || 0) < p.minSpent) return false;
-            return true;
-          });
-        setPromos(mine);
+        setRawPromos(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode));
+        setLoadingPromos(false);
       })
       .catch((err) => reportError(err, 'promo-inbox', { toast: false }))
       .finally(() => !cancelled && setLoadingPromos(false));
+
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) setLoadingPromos(false);
+    }, 1800);
+
+    const unsub = onSnapshot(
+      q,
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        if (cancelled) return;
+        const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode);
+        setRawPromos(list);
+        if (list.length > 0 || !snapshot.metadata.fromCache) {
+          window.clearTimeout(safetyTimer);
+          setLoadingPromos(false);
+        }
+      },
+      (err) => {
+        if (cancelled) return;
+        window.clearTimeout(safetyTimer);
+        reportError(err, 'promo-inbox', { toast: false });
+        setLoadingPromos(false);
+      },
+    );
+
     return () => {
       cancelled = true;
+      window.clearTimeout(safetyTimer);
+      unsub();
     };
-  }, [isOpen, userProfile.uid, userProfile.totalOrders, userProfile.totalSpent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const promos = useMemo(() => {
+    const now = Date.now();
+    return rawPromos.filter((p) => {
+      if (!p.active) return false;
+      const expires = toDate(p.expiresAt);
+      if (expires && expires.getTime() < now) return false;
+      if (p.usageLimit && (p.usedCount || 0) >= p.usageLimit) return false;
+      if (p.usedBy?.includes(userProfile.uid)) return false;
+      if (p.assignedTo?.length) return p.assignedTo.includes(userProfile.uid);
+      if (p.minOrders && (userProfile.totalOrders || 0) < p.minOrders) return false;
+      if (p.minSpent && (userProfile.totalSpent || 0) < p.minSpent) return false;
+      return true;
+    });
+  }, [rawPromos, userProfile.uid, userProfile.totalOrders, userProfile.totalSpent]);
 
   const saveContact = async (e: React.FormEvent) => {
     e.preventDefault();

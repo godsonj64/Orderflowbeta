@@ -711,7 +711,7 @@ async function startServer() {
       let status: Order['status'] = order.status;
       let clientSecret: string | null = null;
       if (status === 'payment_pending') {
-        if (!order.paymentIntentId) continue; // the payment was never started: place a fresh order
+        if (!order.paymentIntentId || !stripeEnabled()) continue; // the payment was never started: place a fresh order
         const pi = await getStripe().paymentIntents.retrieve(order.paymentIntentId);
         if (pi.status === 'succeeded') status = (await finalizePaidOrder(order.id, pi)).status;
         else if (pi.status === 'canceled') continue;
@@ -827,7 +827,7 @@ async function startServer() {
       }
 
       const cardAvailable = stripeEnabled() && profile.isCardPaymentEnabled !== false;
-      const cashAvailable = profile.isCashPaymentEnabled === true;
+      const cashAvailable = profile.isCashPaymentEnabled !== false;
       if (paymentMethod === 'card' && !cardAvailable) {
         throw new HttpError(409, cashAvailable ? 'Card payments are unavailable. Please choose cash.' : 'Online payments are not available right now.');
       }
@@ -1029,7 +1029,7 @@ async function startServer() {
       if (order.paymentStatus === 'paid' || order.paymentStatus === 'refunded' || order.paymentStatus === 'partially_refunded') {
         return res.json({ paid: true, status: order.status, paymentStatus: order.paymentStatus });
       }
-      if (order.paymentMethod === 'cash' || !order.paymentIntentId) {
+      if (order.paymentMethod === 'cash' || !order.paymentIntentId || !stripeEnabled()) {
         return res.json({ paid: false, status: order.status, paymentStatus: order.paymentStatus });
       }
       const pi = await getStripe().paymentIntents.retrieve(order.paymentIntentId);

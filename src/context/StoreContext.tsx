@@ -120,8 +120,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // /api/config can hydrate cold devices without overwriting live Firestore updates.
   const firestoreCategoriesRef = React.useRef<MenuCategory[] | null>(null);
   const firestoreItemsRef = React.useRef<MenuItem[] | null>(null);
+  const persistingCatalogRef = React.useRef<Promise<void> | null>(null);
 
   useEffect(() => {
+    const safetyTimer = window.setTimeout(() => {
+      setProfileLoading(false);
+      setCategoriesLoaded(true);
+      setItemsLoaded(true);
+    }, 2500);
+
     const unsubProfile = onSnapshot(
       doc(db, 'restaurant', 'profile'),
       (snap) => {
@@ -169,6 +176,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
     );
     return () => {
+      window.clearTimeout(safetyTimer);
       unsubProfile();
       unsubCategories();
       unsubItems();
@@ -307,6 +315,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const ensureCatalogPersisted = useCallback(async () => {
     if (!usingDefaultCatalog) return;
+    if (persistingCatalogRef.current) return persistingCatalogRef.current;
     const build = (withProfile: boolean) => {
       const batch = writeBatch(db);
       for (const c of categories) {
@@ -322,20 +331,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const { averageRating: _ar, totalRatings: _tr, ...safeProfile } = baseProfile;
         batch.set(
           doc(db, 'restaurant', 'profile'),
-          { ...safeProfile, name: safeProfile.name || 'Restaurant', isAcceptingOrders: safeProfile.isAcceptingOrders ?? true, starterMenuCleared: true },
+          {
+            ...safeProfile,
+            name: safeProfile.name || 'Restaurant',
+            isAcceptingOrders: safeProfile.isAcceptingOrders ?? true,
+            isCashPaymentEnabled: safeProfile.isCashPaymentEnabled ?? true,
+            starterMenuCleared: true,
+          },
           { merge: true },
         );
       }
       return batch;
     };
-    try {
-      await build(true).commit();
-    } catch (err) {
-      // Kitchen staff may save the menu (e.g. marking an item sold out) but not the store
-      // settings; a batch fails as a whole, so save the menu without the settings flag.
-      if ((err as { code?: string })?.code !== 'permission-denied') throw err;
-      await build(false).commit();
-    }
+    const task = (async () => {
+      try {
+        await build(true).commit();
+      } catch (err) {
+        // Kitchen staff may save the menu (e.g. marking an item sold out) but not the store
+        // settings; a batch fails as a whole, so save the menu without the settings flag.
+        if ((err as { code?: string })?.code !== 'permission-denied') throw err;
+        await build(false).commit();
+      } finally {
+        persistingCatalogRef.current = null;
+      }
+    })();
+    persistingCatalogRef.current = task;
+    return task;
   }, [usingDefaultCatalog, categories, items, rawProfile]);
 
   const clearMenuCatalog = useCallback(async () => {
@@ -350,7 +371,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const { averageRating: _ar, totalRatings: _tr, ...safeProfile } = baseProfile;
     batch.set(
       doc(db, 'restaurant', 'profile'),
-      { ...safeProfile, name: safeProfile.name || 'Restaurant', isAcceptingOrders: safeProfile.isAcceptingOrders ?? true, starterMenuCleared: true },
+      {
+        ...safeProfile,
+        name: safeProfile.name || 'Restaurant',
+        isAcceptingOrders: safeProfile.isAcceptingOrders ?? true,
+        isCashPaymentEnabled: safeProfile.isCashPaymentEnabled ?? true,
+        starterMenuCleared: true,
+      },
       { merge: true },
     );
     await batch.commit();
@@ -376,7 +403,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       status,
       theme,
       cardPaymentsAvailable: serverCard && !!STRIPE_PUBLIC_KEY && profile?.isCardPaymentEnabled !== false,
-      cashPaymentsAvailable: profile?.isCashPaymentEnabled === true,
+      cashPaymentsAvailable: profile?.isCashPaymentEnabled !== false,
       serverReachable,
       orderingMode,
     }),

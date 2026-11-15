@@ -248,28 +248,6 @@ class PdfDocumentBuilder {
     this.pushOp(ops.join('\n'), pIdx);
   }
 
-  /**
-   * Draws a right-side decorative woven/geometric pattern strip matching the solid UI banners.
-   */
-  drawPatternStrip(
-    x: number,
-    topY: number,
-    width: number,
-    height: number,
-    bgFill: Rgb,
-    patternInk: Rgb,
-  ): void {
-    this.drawRect(x, topY, width, height, { fill: bgFill });
-    const step = 10;
-    for (let offset = 6; offset < height - 2; offset += step) {
-      const yStart = topY + offset;
-      const yEnd = Math.max(topY + 2, yStart - 6);
-      this.drawLine(x + 2, yStart, x + width - 2, yEnd, {
-        color: patternInk,
-        lineWidth: 1.6,
-      });
-    }
-  }
 
   drawText(
     text: string,
@@ -488,18 +466,16 @@ export function generateOrderReceiptPdf(
   const accentTextOnBlock: Rgb =
     variant === 'driver' || variant === 'kitchen' ? COLORS.ironCore : COLORS.white;
 
-  // 1. Top Split-Zone Solid Header Banner (Left Solid Code Block + Center Iron Core + Right Pattern Strip)
+  // 1. Top Split-Zone Solid Header Banner (Left Solid Code Block + Center Iron Core)
   const headerH = 76;
   const leftBlockW = 118;
-  const rightStripW = 18;
-  const centerMaxW = w - leftBlockW - rightStripW - 28;
+  const rightStripW = 0;
+  const centerMaxW = w - leftBlockW - 28;
 
   // Center Iron Core Body
   doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.ironCore });
   // Left Solid Accent Block
   doc.drawRect(x0, doc.y, leftBlockW, headerH, { fill: accentColor });
-  // Right Decorative Pattern Strip
-  doc.drawPatternStrip(xRight - rightStripW, doc.y, rightStripW, headerH, accentColor, COLORS.ironCore);
 
   // Left Block Text: ORDER #CODE (auto-fitted to leftBlockW - 18 so 6+ char codes like #UG6YNY never overflow)
   doc.drawText(`ORDER #${code}`, x0 + leftBlockW / 2, doc.y + 35, {
@@ -568,7 +544,6 @@ export function generateOrderReceiptPdf(
 
   doc.drawRect(x0, doc.y, w, payBannerH, { fill: COLORS.ironSlate });
   doc.drawRect(x0, doc.y, payBadgeW, payBannerH, { fill: payBannerAccent });
-  doc.drawPatternStrip(xRight - 14, doc.y, 14, payBannerH, payBannerAccent, COLORS.ironSlate);
 
   doc.drawText(cashDue ? 'CASH DUE' : 'PAID', x0 + payBadgeW / 2, doc.y + 20, {
     font: 'F2',
@@ -613,7 +588,7 @@ export function generateOrderReceiptPdf(
     color: COLORS.mutedLight,
   });
 
-  doc.drawText(formatMoney(order.total), xRight - 24, doc.y + 26, {
+  doc.drawText(formatMoney(order.total), xRight - 14, doc.y + 26, {
     font: 'F4',
     size: 13,
     minSize: 9,
@@ -1032,12 +1007,11 @@ export function generateSalesReportPdf(input: SalesReportPdfInput): Uint8Array {
   // Report Cover Split-Zone Solid Banner
   const headerH = 78;
   const leftBlockW = 114;
-  const rightStripW = 18;
-  const centerMaxW = w - leftBlockW - rightStripW - 28;
+  const rightStripW = 0;
+  const centerMaxW = w - leftBlockW - 28;
 
   doc.drawRect(x0, doc.y, w, headerH, { fill: COLORS.ironCore });
   doc.drawRect(x0, doc.y, leftBlockW, headerH, { fill: COLORS.heatMarker });
-  doc.drawPatternStrip(xRight - rightStripW, doc.y, rightStripW, headerH, COLORS.heatMarker, COLORS.ironCore);
 
   doc.drawText(formatMoney(analytics.netSales), x0 + leftBlockW / 2, doc.y + 36, {
     font: 'F4',

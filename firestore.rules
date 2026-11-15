@@ -487,7 +487,7 @@ service cloud.firestore {
       let profile = /databases/$(database)/documents/restaurant/profile;
       return !exists(profile) ||
              (get(profile).data.isAcceptingOrders == true &&
-              get(profile).data.get('isCashPaymentEnabled', false) == true);
+              get(profile).data.get('isCashPaymentEnabled', true) == true);
     }
 
     function isValidDirectOrder(d) {

@@ -73,7 +73,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [cart, setCart] = useState<CartItem[]>(readCart);
   const [promoCode, setPromoCodeState] = useState<string | null>(() => {
     try {
-      return sessionStorage.getItem(PROMO_KEY);
+      const saved = sessionStorage.getItem(PROMO_KEY);
+      return saved ? saved.trim().toUpperCase() || null : null;
     } catch {
       return null;
     }
@@ -97,9 +98,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const setPromoCode = useCallback((code: string | null) => {
-    setPromoCodeState(code);
+    const clean = code ? code.trim().toUpperCase() || null : null;
+    setPromoCodeState(clean);
     try {
-      if (code) sessionStorage.setItem(PROMO_KEY, code);
+      if (clean) sessionStorage.setItem(PROMO_KEY, clean);
       else sessionStorage.removeItem(PROMO_KEY);
     } catch {
       // ignore

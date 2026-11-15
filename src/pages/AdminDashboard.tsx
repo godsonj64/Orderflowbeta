@@ -270,20 +270,37 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     // Live window of the last 30 days (bounded to 500 recent orders so rush-hour volume stays fast).
+    let cancelled = false;
     const since = Timestamp.fromMillis(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const cache = new Map<string, Order>();
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 1800);
+
     const unsub = onSnapshot(
       query(collection(db, 'orders'), where('createdAt', '>=', since), orderBy('createdAt', 'desc'), limit(500)),
+      { includeMetadataChanges: true },
       (snap) => {
-        setOrders(ordersFromSnapshot(snap, cache));
-        setLoading(false);
+        if (cancelled) return;
+        const list = ordersFromSnapshot(snap, cache);
+        setOrders(list);
+        if (list.length > 0 || !snap.metadata.fromCache) {
+          window.clearTimeout(safetyTimer);
+          setLoading(false);
+        }
       },
       (err) => {
+        if (cancelled) return;
+        window.clearTimeout(safetyTimer);
         reportError(err, 'dashboard-orders');
         setLoading(false);
       },
     );
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safetyTimer);
+      unsub();
+    };
   }, []);
 
   const counts = useMemo(() => {

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Timestamp, collection, deleteDoc, deleteField, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import React, { useEffect, useRef, useState } from 'react';
+import { Timestamp, collection, deleteDoc, deleteField, doc, getDoc, getDocs, getDocsFromCache, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { Plus, Trash2 } from 'lucide-react';
 import { db } from '../firebase';
@@ -52,30 +52,72 @@ function describe(p: PromoCode): string {
   return parts.join(' · ');
 }
 
+function sortPromos(list: PromoCode[]): PromoCode[] {
+  return [...list].sort((a, b) => Number(b.active) - Number(a.active) || a.id.localeCompare(b.id));
+}
+
 export const AdminPromos: React.FC = () => {
   const [promos, setPromos] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<{ promo: PromoCode | null; form: Form } | null>(null);
   const [toDelete, setToDelete] = useState<PromoCode | null>(null);
   const [busy, setBusy] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const togglingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, 'promos'),
-      (snap) => {
-        setPromos(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode).sort((a, b) => Number(b.active) - Number(a.active) || a.id.localeCompare(b.id)));
+    let cancelled = false;
+    const colRef = collection(db, 'promos');
+
+    getDocsFromCache(colRef)
+      .then((cacheSnap) => {
+        if (cancelled || cacheSnap.empty) return;
+        setPromos(sortPromos(cacheSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode)));
         setLoading(false);
+      })
+      .catch(() => undefined);
+
+    getDocs(colRef)
+      .then((snap) => {
+        if (cancelled) return;
+        setPromos(sortPromos(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode)));
+        setLoading(false);
+      })
+      .catch(() => undefined);
+
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 1800);
+
+    const unsub = onSnapshot(
+      colRef,
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (cancelled) return;
+        const list = sortPromos(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode));
+        setPromos(list);
+        if (list.length > 0 || !snap.metadata.fromCache) {
+          window.clearTimeout(safetyTimer);
+          setLoading(false);
+        }
       },
       (err) => {
+        if (cancelled) return;
+        window.clearTimeout(safetyTimer);
         reportError(err, 'promos');
         setLoading(false);
       },
     );
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safetyTimer);
+      unsub();
+    };
   }, []);
 
   const save = async () => {
-    if (!editing) return;
+    if (!editing || busyRef.current) return;
     const f = editing.form;
     const code = f.code.trim().toUpperCase();
     const value = parseAmount(f.discountValue);
@@ -101,6 +143,7 @@ export const AdminPromos: React.FC = () => {
       minSpent: optional(f.minSpent),
     };
 
+    busyRef.current = true;
     setBusy(true);
     try {
       const ref = doc(db, 'promos', code);
@@ -123,20 +166,28 @@ export const AdminPromos: React.FC = () => {
     } catch (err) {
       toast.error(friendlyError(err, 'Could not save the promo.'));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const toggle = async (p: PromoCode) => {
+    if (togglingRef.current.has(p.id)) return;
+    togglingRef.current.add(p.id);
+    setTogglingId(p.id);
     try {
       await updateDoc(doc(db, 'promos', p.id), { active: !p.active });
     } catch (err) {
       toast.error(friendlyError(err));
+    } finally {
+      togglingRef.current.delete(p.id);
+      setTogglingId((curr) => (curr === p.id ? null : curr));
     }
   };
 
   const remove = async () => {
-    if (!toDelete) return;
+    if (!toDelete || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await deleteDoc(doc(db, 'promos', toDelete.id));
@@ -145,6 +196,7 @@ export const AdminPromos: React.FC = () => {
     } catch (err) {
       toast.error(friendlyError(err));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -195,7 +247,8 @@ export const AdminPromos: React.FC = () => {
                     </div>
                     <button
                       onClick={() => toggle(p)}
-                      className={`shrink-0 min-h-[34px] px-3 py-1 rounded-btn text-xs font-bold transition ${
+                      disabled={togglingId === p.id}
+                      className={`shrink-0 min-h-[34px] px-3 py-1 rounded-btn text-xs font-bold transition disabled:opacity-50 ${
                         p.active ? 'bg-accent text-brand border border-brand/20' : 'bg-soft text-muted border border-line'
                       }`}
                     >

@@ -119,7 +119,7 @@ export const AdminLayout: React.FC = () => {
   }
   if (isManager && health && health.firestore === 'ok' && profile) {
     const card = health.cardPayments && profile.isCardPaymentEnabled !== false && !!import.meta.env.VITE_STRIPE_PUBLIC_KEY;
-    if (!card && !profile.isCashPaymentEnabled) {
+    if (!card && profile.isCashPaymentEnabled === false) {
       banners.push({
         tone: 'amber',
         text: (

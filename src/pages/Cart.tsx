@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { doc, getDoc, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocFromCache, onSnapshot, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import {
   AlertCircle,
@@ -266,11 +266,20 @@ export const Cart: React.FC = () => {
     return () => ctrl.abort();
   }, [profile?.location, profile?.address]);
 
+  const lastReverseGeocodedAddressRef = useRef<string | null>(null);
+  const reverseGeocodeReqIdRef = useRef(0);
+
   useEffect(() => {
-    if (orderType !== 'delivery' || address.trim().length < 6) return;
+    const trimmed = address.trim();
+    if (orderType !== 'delivery' || trimmed.length < 6) return;
+    // Do not overwrite an exact GPS or map-dropped pin with an approximate street centroid
+    // when the address field was just populated by reverse-geocoding that pin.
+    if (lastReverseGeocodedAddressRef.current && trimmed === lastReverseGeocodedAddressRef.current.trim()) {
+      return;
+    }
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => {
-      geocodeAddressNominatim(address, ctrl.signal).then((pt) => {
+      geocodeAddressNominatim(trimmed, ctrl.signal).then((pt) => {
         if (!ctrl.signal.aborted && pt) setDeliveryLocation(pt);
       });
     }, 650);
@@ -285,6 +294,7 @@ export const Cart: React.FC = () => {
       toast.error('GPS location is not supported by your browser.');
       return;
     }
+    const reqId = ++reverseGeocodeReqIdRef.current;
     setLocatingGps(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -296,8 +306,16 @@ export const Cart: React.FC = () => {
         };
         setDeliveryLocation(pt);
         const formatted = await reverseGeocodeNominatim(pt.lat, pt.lng);
-        if (formatted) setAddress(formatted);
-        else if (!address.trim()) setAddress(`${pt.lat}, ${pt.lng}`);
+        if (reqId === reverseGeocodeReqIdRef.current) {
+          if (formatted) {
+            lastReverseGeocodedAddressRef.current = formatted;
+            setAddress(formatted);
+          } else if (!address.trim()) {
+            const coordStr = `${pt.lat}, ${pt.lng}`;
+            lastReverseGeocodedAddressRef.current = coordStr;
+            setAddress(coordStr);
+          }
+        }
         setLocatingGps(false);
         toast.success('Pinned your live GPS location');
       },
@@ -312,9 +330,13 @@ export const Cart: React.FC = () => {
   const handleMapSelectPoint = async (pt: GeoPoint) => {
     const clean = sanitizeGeoPoint({ ...pt, updatedAt: Date.now() });
     if (!clean) return;
+    const reqId = ++reverseGeocodeReqIdRef.current;
     setDeliveryLocation(clean);
     const formatted = await reverseGeocodeNominatim(clean.lat, clean.lng);
-    if (formatted) setAddress(formatted);
+    if (formatted && reqId === reverseGeocodeReqIdRef.current) {
+      lastReverseGeocodedAddressRef.current = formatted;
+      setAddress(formatted);
+    }
   };
 
   const distanceBadge = useMemo(() => {
@@ -333,36 +355,110 @@ export const Cart: React.FC = () => {
   const [driverTip, setDriverTip] = useState<TipChoice>({ percent: 0 });
 
   // --- Promo ----------------------------------------------------------------
-  const [promo, setPromo] = useState<PromoCode | null>(null);
-  const [promoLoaded, setPromoLoaded] = useState(false);
+  const normalizedPromoCode = promoCode ? promoCode.trim().toUpperCase() || null : null;
+  const [loadedPromo, setLoadedPromo] = useState<{ uid: string; code: string; data: PromoCode | null } | null>(null);
   const [promoInput, setPromoInput] = useState('');
+
   useEffect(() => {
-    setPromo(null);
-    setPromoLoaded(false);
-    if (!promoCode || !userProfile) return;
+    const uid = userProfile?.uid;
+    if (!normalizedPromoCode || !uid) {
+      setLoadedPromo(null);
+      return;
+    }
     let cancelled = false;
-    getDoc(doc(db, 'promos', promoCode))
+    const ref = doc(db, 'promos', normalizedPromoCode);
+
+    // 1. Instant local cache lookup if the promo was already loaded in the profile drawer
+    getDocFromCache(ref)
+      .then((cacheSnap) => {
+        if (cancelled || !cacheSnap.exists()) return;
+        setLoadedPromo({
+          uid,
+          code: normalizedPromoCode,
+          data: { id: cacheSnap.id, ...cacheSnap.data() } as PromoCode,
+        });
+      })
+      .catch(() => undefined);
+
+    // 2. Standard one-shot getDoc
+    getDoc(ref)
       .then((snap) => {
         if (cancelled) return;
-        setPromo(snap.exists() ? ({ id: snap.id, ...snap.data() } as PromoCode) : null);
-        setPromoLoaded(true);
+        setLoadedPromo({
+          uid,
+          code: normalizedPromoCode,
+          data: snap.exists() ? ({ id: snap.id, ...snap.data() } as PromoCode) : null,
+        });
       })
       .catch((err) => {
         reportError(err, 'load-promo', { toast: false });
-        if (!cancelled) setPromoLoaded(true);
+        if (!cancelled) {
+          setLoadedPromo((prev) =>
+            prev && prev.uid === uid && prev.code === normalizedPromoCode ? prev : { uid, code: normalizedPromoCode, data: null },
+          );
+        }
       });
+
+    // 3. Safety timeout so "Checking…" never hangs on slow or reconnecting multi-tab sessions
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setLoadedPromo((prev) =>
+          prev && prev.uid === uid && prev.code === normalizedPromoCode ? prev : { uid, code: normalizedPromoCode, data: null },
+        );
+      }
+    }, 1800);
+
+    // 4. Live listener so any promo activation/update by the store reflects immediately
+    const unsub = onSnapshot(
+      ref,
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (cancelled) return;
+        const fromCache = snap.metadata.fromCache;
+        if (snap.exists()) {
+          window.clearTimeout(safetyTimer);
+          setLoadedPromo({
+            uid,
+            code: normalizedPromoCode,
+            data: { id: snap.id, ...snap.data() } as PromoCode,
+          });
+        } else if (!fromCache) {
+          window.clearTimeout(safetyTimer);
+          setLoadedPromo({ uid, code: normalizedPromoCode, data: null });
+        }
+      },
+      () => {
+        if (!cancelled) {
+          window.clearTimeout(safetyTimer);
+          setLoadedPromo((prev) =>
+            prev && prev.uid === uid && prev.code === normalizedPromoCode ? prev : { uid, code: normalizedPromoCode, data: null },
+          );
+        }
+      },
+    );
+
     return () => {
       cancelled = true;
+      window.clearTimeout(safetyTimer);
+      unsub();
     };
-  }, [promoCode, userProfile?.uid]);
+  }, [normalizedPromoCode, userProfile?.uid]);
+
+  // Synchronously derived so changing promoCode immediately marks promoLoaded = false on the same frame.
+  const promoLoaded =
+    !!normalizedPromoCode &&
+    !!userProfile &&
+    loadedPromo?.uid === userProfile.uid &&
+    loadedPromo?.code === normalizedPromoCode;
+  const promo = promoLoaded ? loadedPromo.data : null;
 
   // Discounts are validated and counted by the server; in basic mode they are not offered.
   const promosAvailable = orderingMode !== 'direct';
   const promoProblem = !promosAvailable
-    ? promoCode
+    ? normalizedPromoCode
       ? "Promo codes can't be used right now."
       : null
-    : promoCode && userProfile && promoLoaded
+    : normalizedPromoCode && userProfile && promoLoaded
       ? promoError(promo, {
           uid: userProfile.uid,
           totalOrders: userProfile.totalOrders || 0,
@@ -371,7 +467,7 @@ export const Cart: React.FC = () => {
           now: new Date(),
         })
       : null;
-  const discountCents = promosAvailable && promoCode && promoLoaded && !promoProblem ? promoDiscountCents(promo, pricing.subtotalCents) : 0;
+  const discountCents = promosAvailable && normalizedPromoCode && promoLoaded && !promoProblem ? promoDiscountCents(promo, pricing.subtotalCents) : 0;
 
   const totals = computeTotals({
     subtotalCents: pricing.subtotalCents,
@@ -623,8 +719,9 @@ export const Cart: React.FC = () => {
     );
   }
 
-  const ctaLabel = !userProfile ? 'Sign in to order' : `Place Order (${formatMoney(totals.total)})`;
-  const ctaDisabled = placing || authLoading || (!!userProfile && (configPending || blockers.length > 0));
+  const promoChecking = !!(userProfile && promosAvailable && normalizedPromoCode && !promoLoaded);
+  const ctaLabel = !userProfile ? 'Sign in to order' : promoChecking ? 'Checking promo…' : `Place Order (${formatMoney(totals.total)})`;
+  const ctaDisabled = placing || authLoading || promoChecking || (!!userProfile && (configPending || blockers.length > 0));
 
   const cta = (
     <button

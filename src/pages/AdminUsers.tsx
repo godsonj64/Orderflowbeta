@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, getDocs, getDocsFromCache, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { deleteApp, getApps, initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth';
 import toast from 'react-hot-toast';
@@ -52,36 +52,84 @@ export const AdminUsers: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'staff' as UserRole });
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const assigningPromoRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const unsubUsers = onSnapshot(
-      collection(db, 'users'),
-      (snap) => {
-        setUsers(
-          snap.docs.map((d) => {
-            const data = d.data() as UserProfile;
-            if (BOOTSTRAP_ADMIN_EMAILS.has((data.email || '').toLowerCase()) && data.role !== 'admin') {
-              if (role === 'admin') {
-                updateDoc(doc(db, 'users', d.id), { role: 'admin' }).catch(() => undefined);
-              }
-              return { ...data, role: 'admin' as const };
-            }
-            return data;
-          }),
-        );
+    let cancelled = false;
+    const usersCol = collection(db, 'users');
+    const promosCol = collection(db, 'promos');
+
+    const mapUsers = (docs: { id: string; data: () => unknown }[]) =>
+      docs.map((d) => {
+        const data = d.data() as UserProfile;
+        if (BOOTSTRAP_ADMIN_EMAILS.has((data.email || '').toLowerCase()) && data.role !== 'admin') {
+          if (role === 'admin') {
+            updateDoc(doc(db, 'users', d.id), { role: 'admin' }).catch(() => undefined);
+          }
+          return { ...data, uid: data.uid || d.id, role: 'admin' as const };
+        }
+        return { ...data, uid: data.uid || d.id };
+      });
+
+    getDocsFromCache(usersCol)
+      .then((cacheSnap) => {
+        if (cancelled || cacheSnap.empty) return;
+        setUsers(mapUsers(cacheSnap.docs));
         setLoading(false);
+      })
+      .catch(() => undefined);
+
+    getDocs(usersCol)
+      .then((snap) => {
+        if (cancelled) return;
+        setUsers(mapUsers(snap.docs));
+        setLoading(false);
+      })
+      .catch(() => undefined);
+
+    getDocsFromCache(promosCol)
+      .then((cacheSnap) => {
+        if (cancelled || cacheSnap.empty) return;
+        setPromos(cacheSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode));
+      })
+      .catch(() => undefined);
+
+    const safetyTimer = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 1800);
+
+    const unsubUsers = onSnapshot(
+      usersCol,
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (cancelled) return;
+        const list = mapUsers(snap.docs);
+        setUsers(list);
+        if (list.length > 0 || !snap.metadata.fromCache) {
+          window.clearTimeout(safetyTimer);
+          setLoading(false);
+        }
       },
       (err) => {
+        if (cancelled) return;
+        window.clearTimeout(safetyTimer);
         reportError(err, 'users');
         setLoading(false);
       },
     );
     const unsubPromos = onSnapshot(
-      collection(db, 'promos'),
-      (snap) => setPromos(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode)),
+      promosCol,
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (cancelled) return;
+        setPromos(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PromoCode));
+      },
       (err) => reportError(err, 'users-promos', { toast: false }),
     );
     return () => {
+      cancelled = true;
+      window.clearTimeout(safetyTimer);
       unsubUsers();
       unsubPromos();
     };
@@ -101,7 +149,8 @@ export const AdminUsers: React.FC = () => {
   const current = selected ? users.find((u) => u.uid === selected.uid) || selected : null;
 
   const confirmRole = async () => {
-    if (!roleChange) return;
+    if (!roleChange || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await updateDoc(doc(db, 'users', roleChange.user.uid), { role: roleChange.role });
@@ -110,16 +159,22 @@ export const AdminUsers: React.FC = () => {
     } catch (err) {
       toast.error(friendlyError(err));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const setPromoAssignment = async (promo: PromoCode, user: UserProfile, assign: boolean) => {
+    const lockKey = `${promo.id}:${user.uid}`;
+    if (assigningPromoRef.current.has(lockKey)) return;
+    assigningPromoRef.current.add(lockKey);
     try {
       await updateDoc(doc(db, 'promos', promo.id), { assignedTo: assign ? arrayUnion(user.uid) : arrayRemove(user.uid) });
       toast.success(assign ? `${promo.id} sent to ${user.name || user.email}` : `${promo.id} removed`);
     } catch (err) {
       toast.error(friendlyError(err));
+    } finally {
+      assigningPromoRef.current.delete(lockKey);
     }
   };
 
