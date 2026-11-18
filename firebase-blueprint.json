@@ -428,6 +428,14 @@
         "loyaltyPoints": {
           "type": "number",
           "description": "Server-maintained"
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "True when an admin or manager has suspended/blocked this account"
+        },
+        "disabledReason": {
+          "type": "string",
+          "description": "Optional reason for suspending/blocking the account"
         }
       },
       "required": [

@@ -498,6 +498,7 @@ export const Cart: React.FC = () => {
   };
 
   const blockers: string[] = [];
+  if (userProfile?.disabled) blockers.push('Your account has been suspended. Please contact the restaurant.');
   if (pricing.ready && pricing.hasErrors) blockers.push('Remove the unavailable items from your cart.');
   if (status.state === 'offline') blockers.push("We're not accepting online orders right now.");
   else if (when === 'asap' && !status.canOrderNow) blockers.push(`We're closed right now.${status.detail ? ` ${status.detail}.` : ''}`);

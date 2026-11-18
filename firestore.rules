@@ -49,11 +49,15 @@ service cloud.firestore {
       allow read, write: if isBootstrapAdmin();
     }
 
+    function userRoleOrDisabled(u) {
+      return u.get('disabled', false) == true ? 'disabled' : u.role;
+    }
+
     function role() {
       return !isAuthenticated() ? 'anonymous' :
              isBootstrapAdmin() ? 'admin' :
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role :
+               userRoleOrDisabled(get(/databases/$(database)/documents/users/$(request.auth.uid)).data) :
              hasVerifiedInvite() ? invitedRole() : 'customer';
     }
 
@@ -109,7 +113,8 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'email', 'role']) &&
              data.keys().hasOnly([
                'uid', 'email', 'role', 'name', 'phone', 'savedAddresses',
-               'totalOrders', 'totalSpent', 'loyaltyPoints', 'lastOrderDate', 'createdAt'
+               'totalOrders', 'totalSpent', 'loyaltyPoints', 'disabled', 'disabledReason',
+               'lastOrderDate', 'createdAt'
              ]) &&
              data.uid is string && data.uid.size() > 0 && data.uid.size() <= 150 &&
              data.email is string && isValidEmail(data.email) &&
@@ -124,6 +129,8 @@ service cloud.firestore {
              optNumberMin(data, 'totalOrders', 0) &&
              (!('totalSpent' in data) || (data.totalSpent is number && data.totalSpent >= 0)) &&
              (!('loyaltyPoints' in data) || (data.loyaltyPoints is number && data.loyaltyPoints >= 0)) &&
+             optBool(data, 'disabled') &&
+             optString(data, 'disabledReason', 200) &&
              (!('lastOrderDate' in data) || data.lastOrderDate is timestamp) &&
              (!('createdAt' in data) || data.createdAt is timestamp);
     }
@@ -363,6 +370,7 @@ service cloud.firestore {
              (
                // Self sign-up: customer (or pre-authorized invited team role) with zeroed statistics.
                (request.auth.uid == userId &&
+                 d.get('disabled', false) == false &&
                  (d.role == 'customer' || (hasVerifiedInvite() && d.role == invitedRole())) &&
                  d.get('totalOrders', 0) == 0 && d.get('totalSpent', 0) == 0 && d.get('loyaltyPoints', 0) == 0) ||
                r == 'admin' ||
@@ -379,9 +387,13 @@ service cloud.firestore {
              request.resource.data.uid == resource.data.uid &&
              (
                (request.auth.uid == userId &&
+                 resource.data.get('disabled', false) != true &&
+                 request.resource.data.get('disabled', false) != true &&
                  request.resource.data.role == resource.data.role &&
                  changed.hasOnly(['name', 'phone', 'savedAddresses'])) ||
                (request.auth.uid == userId &&
+                 resource.data.get('disabled', false) != true &&
+                 request.resource.data.get('disabled', false) != true &&
                  hasVerifiedInvite() &&
                  request.resource.data.role == invitedRole() &&
                  changed.hasOnly(['role', 'name'])) ||
@@ -396,7 +408,10 @@ service cloud.firestore {
       allow update: if canUpdateUser(role(), userId);
       allow delete: if isValidUserDocId(userId) && (
                       role() == 'admin' ||
-                      (isManagerRole(role()) && userId.matches('^invite_.+$')) ||
+                      (isManagerRole(role()) && userId != request.auth.uid && (
+                        userId.matches('^invite_.+$') ||
+                        canUpdateRole(role(), 'customer', resource.data.role)
+                      )) ||
                       (isAuthenticated() && request.auth.token.get('email_verified', false) == true && userId == inviteDocId())
                     );
     }
@@ -598,7 +613,7 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if canReadOrder(role());
-      allow create: if isAuthenticated() && isValidId(orderId) && isValidDirectOrder(request.resource.data) && cashOrderingOpen();
+      allow create: if isAuthenticated() && isValidId(orderId) && role() != 'disabled' && isValidDirectOrder(request.resource.data) && cashOrderingOpen();
       allow update: if canUpdateOrder(role());
       allow delete: if false; // Orders should not be deleted, only cancelled
 

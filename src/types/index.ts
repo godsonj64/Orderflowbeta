@@ -21,6 +21,8 @@ export interface UserProfile {
   totalOrders?: number;
   totalSpent?: number;
   loyaltyPoints?: number;
+  disabled?: boolean;
+  disabledReason?: string;
   lastOrderDate?: any; // Firestore Timestamp
   createdAt?: any; // Firestore Timestamp
 }

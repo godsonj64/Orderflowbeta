@@ -144,4 +144,11 @@ export const api = {
     apiPost<{ refundAmount: number; paymentStatus: PaymentStatus; status: OrderStatus }>(`/api/orders/${encodeURIComponent(orderId)}/refund`, { amount, reason }),
   rate: (orderId: string, rating: number, comment?: string) =>
     apiPost<{ ok: true }>(`/api/orders/${encodeURIComponent(orderId)}/rate`, { rating, comment }),
+  resetUserPassword: (uid: string, body: { password: string; email?: string; role?: string; name?: string }) =>
+    apiPost<{ ok: true; uid: string }>(`/api/users/${encodeURIComponent(uid)}/reset-password`, body),
+  removeUser: (uid: string, body: { mode: 'delete' | 'block' | 'unblock'; reason?: string; email?: string; role?: string }) =>
+    apiPost<{ ok: true; mode: 'delete' | 'block' | 'unblock'; authUpdated: boolean; dbUpdated: boolean }>(
+      `/api/users/${encodeURIComponent(uid)}/remove`,
+      body,
+    ),
 };

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, getDocs, collection, query, where, Timestamp, serverTimestamp, deleteField, setLogLevel } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, collection, query, where, Timestamp, serverTimestamp, deleteField, setLogLevel } from 'firebase/firestore';
 
 // Denied writes are expected here; keep the output to the ok / FAIL lines.
 setLogLevel('silent');
@@ -235,6 +235,17 @@ await check('customer cannot change their role', () => assertFails(updateDoc(doc
 await check('customer cannot read other users', () => assertFails(getDoc(doc(customer, 'users', 'cust2'))));
 await check('manager can promote a customer to staff', () => assertSucceeds(updateDoc(doc(manager, 'users', 'cust2'), { role: 'staff' })));
 await check('manager cannot create an admin', () => assertFails(updateDoc(doc(manager, 'users', 'cust2'), { role: 'admin' })));
+await check('manager can block and unblock a user, and blocked user cannot place orders', async () => {
+  await assertSucceeds(updateDoc(doc(manager, 'users', 'cust1'), { disabled: true, disabledReason: 'Fraud' }));
+  await assertFails(setDoc(doc(customer, 'orders', 'BLOCKED01'), directOrder()));
+  await assertFails(updateDoc(doc(customer, 'users', 'cust1'), { disabled: false }));
+  await assertSucceeds(updateDoc(doc(manager, 'users', 'cust1'), { disabled: false, disabledReason: deleteField() }));
+});
+await check('manager can remove ex-employee or customer but not themselves or another manager', async () => {
+  await assertFails(deleteDoc(doc(manager, 'users', 'mgr1')));
+  await assertFails(deleteDoc(doc(manager, 'users', 'admin1')));
+  await assertSucceeds(deleteDoc(doc(manager, 'users', 'cust2')));
+});
 
 console.log('\nTeam invitations');
 await env.withSecurityRulesDisabled(async (ctx) => {

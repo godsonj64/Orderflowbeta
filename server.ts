@@ -44,6 +44,7 @@ import { toMillis } from './src/lib/dates';
 import { fromCents, roundMoney, toCents } from './src/lib/money';
 import { sanitizeGeoPoint } from './src/lib/geo';
 import { DEFAULT_CATEGORIES, DEFAULT_ITEMS, DEFAULT_RESTAURANT_PROFILE } from './src/lib/defaultStore';
+import { canManageUser, canResetUserPassword, validateAdminPasswordInput } from './src/lib/userManagement';
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -241,7 +242,11 @@ async function authenticate(req: Request): Promise<AuthedUser> {
       // If admin SDK has no credentials, role safely defaults to customer
     }
   }
-  if (decoded.email_verified !== false && BOOTSTRAP_ADMINS.includes((decoded.email || '').toLowerCase())) role = 'admin';
+  const isBootstrap = decoded.email_verified !== false && BOOTSTRAP_ADMINS.includes((decoded.email || '').toLowerCase());
+  if (isBootstrap) role = 'admin';
+  if (profile?.disabled && !isBootstrap) {
+    throw new HttpError(403, 'Your account has been suspended. Please contact the restaurant.');
+  }
   return { uid: decoded.uid, email: decoded.email || profile?.email || '', role, profile };
 }
 
@@ -1181,6 +1186,197 @@ async function startServer() {
         }
       });
       res.json({ ok: true });
+    }),
+  );
+
+  // Admin / Manager tool: directly set or reset a user's password via Firebase Admin Auth.
+  app.post(
+    '/api/users/:uid/reset-password',
+    route(async (req, res) => {
+      const actor = await authenticate(req);
+      if (!isManagerRole(actor.role)) throw new HttpError(403, 'Only managers and admins can reset passwords.');
+      rateLimit(`pw-reset:${actor.uid}`, 20, 10 * 60_000);
+
+      const targetUid = str(req.params.uid, 150);
+      const password = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+      const passErr = validateAdminPasswordInput(password);
+      if (passErr) throw new HttpError(400, passErr);
+
+      const dbOk = await hasDatabaseAccess();
+      let target: Pick<UserProfile, 'uid' | 'email' | 'role' | 'name'> = {
+        uid: targetUid,
+        email: str(req.body?.email, 150).toLowerCase(),
+        role: (str(req.body?.role, 30) as UserRole) || 'customer',
+        name: str(req.body?.name, 100),
+      };
+
+      if (dbOk) {
+        const snap = await db.collection('users').doc(targetUid).get();
+        if (snap.exists) {
+          const data = snap.data() as UserProfile;
+          target = {
+            uid: data.uid || snap.id,
+            email: (data.email || target.email || '').toLowerCase(),
+            role: data.role || 'customer',
+            name: data.name || target.name,
+          };
+        }
+      }
+
+      if (!canResetUserPassword(actor.role, target, new Set(BOOTSTRAP_ADMINS))) {
+        throw new HttpError(403, 'You do not have permission to reset the password for this user.');
+      }
+
+      try {
+        let authUid = targetUid.startsWith('invite_') ? '' : targetUid;
+        if (authUid) {
+          try {
+            await admin.auth().updateUser(authUid, { password });
+          } catch (err: any) {
+            if (err?.code === 'auth/user-not-found' && target.email) {
+              authUid = '';
+            } else {
+              throw err;
+            }
+          }
+        }
+        if (!authUid && target.email) {
+          try {
+            const existingAuth = await admin.auth().getUserByEmail(target.email);
+            authUid = existingAuth.uid;
+            await admin.auth().updateUser(authUid, { password });
+          } catch (err: any) {
+            if (err?.code === 'auth/user-not-found') {
+              const created = await admin.auth().createUser({
+                email: target.email,
+                password,
+                ...(target.name ? { displayName: target.name } : {}),
+              });
+              authUid = created.uid;
+            } else {
+              throw err;
+            }
+          }
+        }
+        if (authUid) {
+          await admin.auth().revokeRefreshTokens(authUid).catch(() => undefined);
+        }
+        res.json({ ok: true, uid: authUid || targetUid });
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        if (/default credentials|PERMISSION_DENIED|UNAUTHENTICATED|credential/i.test(msg)) {
+          throw new HttpError(503, 'Direct password change requires server Admin credentials. Use "Send reset email" instead.', {
+            code: NO_DATABASE,
+          });
+        }
+        throw new HttpError(400, err?.message || 'Could not update password.');
+      }
+    }),
+  );
+
+  // Admin / Manager tool: block/unblock or permanently remove a person (ex-employee, fraud user, etc.).
+  app.post(
+    '/api/users/:uid/remove',
+    route(async (req, res) => {
+      const actor = await authenticate(req);
+      if (!isManagerRole(actor.role)) throw new HttpError(403, 'Only managers and admins can remove or block users.');
+      rateLimit(`user-remove:${actor.uid}`, 25, 10 * 60_000);
+
+      const targetUid = str(req.params.uid, 150);
+      const mode: 'delete' | 'block' | 'unblock' =
+        req.body?.mode === 'block' ? 'block' : req.body?.mode === 'unblock' ? 'unblock' : 'delete';
+      const reason = str(req.body?.reason, 200);
+
+      const dbOk = await hasDatabaseAccess();
+      let target: Pick<UserProfile, 'uid' | 'email' | 'role'> = {
+        uid: targetUid,
+        email: str(req.body?.email, 150).toLowerCase(),
+        role: (str(req.body?.role, 30) as UserRole) || 'customer',
+      };
+
+      if (dbOk) {
+        const snap = await db.collection('users').doc(targetUid).get();
+        if (snap.exists) {
+          const data = snap.data() as UserProfile;
+          target = {
+            uid: data.uid || snap.id,
+            email: (data.email || target.email || '').toLowerCase(),
+            role: data.role || 'customer',
+          };
+        }
+      }
+
+      if (!canManageUser(actor.role, actor.uid, target, new Set(BOOTSTRAP_ADMINS))) {
+        throw new HttpError(403, 'You do not have permission to modify or remove this account.');
+      }
+
+      let authUpdated = false;
+      const resolveAuthUid = async (): Promise<string | null> => {
+        if (!targetUid.startsWith('invite_')) return targetUid;
+        if (!target.email) return null;
+        try {
+          const u = await admin.auth().getUserByEmail(target.email);
+          return u.uid;
+        } catch {
+          return null;
+        }
+      };
+
+      try {
+        const authUid = await resolveAuthUid();
+        if (authUid) {
+          if (mode === 'delete') {
+            await admin.auth().deleteUser(authUid);
+            authUpdated = true;
+          } else if (mode === 'block') {
+            await admin.auth().updateUser(authUid, { disabled: true });
+            await admin.auth().revokeRefreshTokens(authUid).catch(() => undefined);
+            authUpdated = true;
+          } else if (mode === 'unblock') {
+            await admin.auth().updateUser(authUid, { disabled: false });
+            authUpdated = true;
+          }
+        }
+      } catch {
+        // Best-effort Firebase Auth mutation: Firestore rules & profile flags still enforce removal/blocking.
+      }
+
+      if (dbOk) {
+        const userRef = db.collection('users').doc(targetUid);
+        if (mode === 'block') {
+          await userRef.set(
+            {
+              uid: targetUid,
+              email: target.email,
+              role: 'customer',
+              disabled: true,
+              ...(reason ? { disabledReason: reason } : {}),
+            },
+            { merge: true },
+          );
+          if (target.email) {
+            await db.collection('users').doc(`invite_${target.email}`).delete().catch(() => undefined);
+          }
+        } else if (mode === 'unblock') {
+          await userRef.update({
+            disabled: false,
+            disabledReason: FieldValue.delete(),
+          });
+        } else {
+          await userRef.delete().catch(() => undefined);
+          if (target.email) {
+            await db.collection('users').doc(`invite_${target.email}`).delete().catch(() => undefined);
+          }
+          const assignedPromos = await db.collection('promos').where('assignedTo', 'array-contains', targetUid).get().catch(() => null);
+          if (assignedPromos && !assignedPromos.empty) {
+            await Promise.all(
+              assignedPromos.docs.map((d) => d.ref.update({ assignedTo: FieldValue.arrayRemove(targetUid) }).catch(() => undefined)),
+            );
+          }
+        }
+      }
+
+      res.json({ ok: true, mode, authUpdated, dbUpdated: dbOk });
     }),
   );
 

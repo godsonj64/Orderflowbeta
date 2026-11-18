@@ -138,7 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Check if an admin pre-authorized a team role for this user's email
             // (Once per sign-in: the profile changes with every order, the invite does not.)
-            if (snapEmailLower && data.role === 'customer' && !fromCache && inviteCheckedFor.current !== currentUser.uid) {
+            if (snapEmailLower && data.role === 'customer' && !data.disabled && !fromCache && inviteCheckedFor.current !== currentUser.uid) {
               inviteCheckedFor.current = currentUser.uid;
               const inviteRef = doc(db, 'users', emailInviteDocId(snapEmailLower));
               getDoc(inviteRef)
@@ -271,7 +271,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const value = useMemo<AuthContextType>(() => {
     const isBootstrapAdmin = !!user && BOOTSTRAP_ADMIN_EMAILS.has((user.email || userProfile?.email || '').toLowerCase());
-    const role: UserRole | null = isBootstrapAdmin ? 'admin' : userProfile ? userProfile.role : null;
+    const role: UserRole | null = isBootstrapAdmin ? 'admin' : userProfile?.disabled ? 'customer' : userProfile ? userProfile.role : null;
     return {
       user,
       userProfile,
